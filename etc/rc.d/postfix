@@ -73,6 +73,17 @@ postfix_op()
 	${postfix_command} ${rc_arg}
 }
 
+postfix_bgstart()
+{
+	echo "Starting ${name} in the background."
+	# /etc/rc reads the output of the scripts through a pipe until
+	# every writer has closed it, so hand the output to syslog
+	# instead: 9 is where /etc/rc keeps that pipe too.
+	(exec </dev/null >/dev/null 2>&1 9>&-
+	 { postfix_precmd && postfix_op; } 2>&1 |
+	    logger -p mail.notice -t ${name}) &
+}
+
 check_use_postfix()
 {
 	_mta_path=$(awk '/^sendmail[ \t]/{print$2}' /etc/mailer.conf)
@@ -100,4 +111,10 @@ _rc_d_postfix=check
 load_rc_config $name
 unset _rc_d_postfix
 postfix=$(check_use_postfix)
+# At boot, postfix(1) checks its files and queues for a second or two
+# before it starts; let the boot go on meanwhile.
+if [ "$autoboot" = yes ] && checkyesno postfix_background; then
+	start_precmd=
+	start_cmd="postfix_bgstart"
+fi
 run_rc_command "$1"
