@@ -1,56 +1,68 @@
-NetBSD
-======
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="autumn-logo/autumnbsd-lockup-dark.svg">
+<img src="autumn-logo/autumnbsd-lockup.svg" alt="AutumnBSD" width="380">
+</picture>
+</p>
 
-NetBSD is a free, fast, secure, and highly portable Unix-like Open
-Source operating system.  It is available for a [wide range of
-platforms](https://wiki.NetBSD.org/ports/), from large-scale servers
-and powerful desktop systems to handheld and embedded devices.
+# AutumnBSD
 
-Building
---------
+A NetBSD-based desktop OS designed to make older PCs more pleasant to use.
 
-You can cross-build NetBSD from most UNIX-like operating systems.
-To build for amd64 (x86_64), in the src directory:
+When using a laptop that is over a decade old—without upgrades like an SSD or additional RAM—delays are typically caused by HDD seek times or swapping due to insufficient memory. AutumnBSD aims to reduce these wait times at the OS level.
 
-    ./build.sh -U -u -j4 -m amd64 -O ~/obj release
+## Current Feature: aprefetch
 
-Additional build information available in the [BUILDING](BUILDING) file.
+This feature records the files and FFS (Fast File System) metadata accessed during startup. On subsequent boots, it sorts these items based on their physical location on the disk and pre-fetches them in a single, efficient pass. It is designed to transform scattered, random disk accesses into a more streamlined, sequential sweep.
 
-Binaries
---------
+On the target hardware used for testing, the time required for the userland to load (from the `init` process to the login prompt) was reduced from 16.2 seconds to 7.3 seconds (median value over 5 runs). When accounting for the removal of the wait time for the `postfix` service to start, this figure drops to 5.4 seconds (based on a single measurement). Pre-fetching for individual applications is not yet implemented. 
 
-- [Daily builds](https://nycdn.NetBSD.org/pub/NetBSD-daily/HEAD/latest/)
-- [Releases](https://cdn.NetBSD.org/pub/NetBSD/)
+- [HDD Acceleration Specification](AutumnBSD_SPEC_HDD.md): Design, phased implementation, and performance measurement results.
+- [TLA+ Model](tla/aprefetch/README.md): Model checking for scenarios where prefetching occurs concurrently with standard read operations or unmount requests.
+- Manual pages: [aprefetch(4)](share/man/man4/aprefetch.4), [aprefd(8)](usr.sbin/aprefd/aprefd.8), [aprefctl(8)](usr.sbin/aprefctl/aprefctl.8)
 
-Testing
--------
+## Future Work
 
-On a running NetBSD system:
+- Compressed Memory (in design): Compresses data in RAM using LZ4 before it is swapped out—similar to `zram`. This will also serve as a temporary buffer for data that cannot yet be written to disk.
+- Display Manager (conceptual stage): A custom-built, low-dependency login screen. It begins prefetching the user session while the password is being entered.
+- Package Installation (under consideration): Consolidating post-installation tasks and `fsync` operations to reduce wait times on HDD-based systems.
 
-    cd /usr/tests; atf-run | atf-report
+## Design Philosophy
 
-Troubleshooting
----------------
+- Performance is never pursued at the expense of correctness or data integrity. We strictly honor `fsync` guarantees, and the prefetching mechanism is designed so that any failure simply results in the data not being prefetched—with no negative impact on system stability or data safety.
+- Key design aspects are verified using formal methods; specifically, `aprefetch` has been validated through TLA+ model checking.
+- We maintain minimal dependencies while ensuring a polished, desktop-ready appearance.
 
-- Send bugs and patches [via web form](https://www.NetBSD.org/cgi-bin/sendpr.cgi?gndb=netbsd).
-- Subscribe to the [mailing lists](https://www.NetBSD.org/mailinglists/).
-  The [netbsd-users](https://www.NetBSD.org/mailinglists/#netbsd-users) list is a good choice for many problems; watch [current-users](https://www.NetBSD.org/mailinglists/#current-users) if you follow the bleeding edge of NetBSD-current.
-- Join the community IRC channel [#netbsd @ libera.chat](https://web.libera.chat/#netbsd).
+## Target Hardware
 
-Latest sources
---------------
+The design and performance measurements are based on this specific hardware. - Model: NEC LaVie S LS150/F (laptop from around 2011)
+- CPU: Intel Pentium B950 (2.1GHz, 2 cores, 2 threads, no AES-NI)
+- Memory: 4GB
+- Storage: 512GB HDD
+- GPU: Intel HD Graphics (Sandy Bridge generation, i915)
 
-To fetch the main CVS repository:
+## Building
 
-    cvs -d anoncvs@anoncvs.NetBSD.org:/cvsroot checkout -P src
+Installation images are not yet available for distribution.
 
-To work in the Git mirror, which is updated every few hours from CVS:
+The build system is identical to NetBSD’s `build.sh`, allowing for cross-compilation from any UNIX-like OS. To create a release and installation image for the `amd64` architecture, run the following commands from the root of the repository:
 
-    git clone https://github.com/NetBSD/src.git
+```sh
+./build.sh -U -u -j4 -m amd64 -O ~/obj release
+./build.sh -U -u -j4 -m amd64 -O ~/obj install-image
+```
 
-Additional Links
-----------------
+For details on the available options, please refer to [BUILDING](BUILDING).
 
-- [The NetBSD Guide](https://www.NetBSD.org/docs/guide/en/)
-- [NetBSD manual pages](https://man.NetBSD.org/)
-- [NetBSD Cross-Reference](https://nxr.NetBSD.org/)
+## Related Projects
+
+- [NetBSD](https://www.NetBSD.org/): The foundation for AutumnBSD.
+- KyanBSD: A sister project based on FreeBSD. It focuses on robustness for data center environments, incorporating features such as a hypervisor and formal verification using Frama-C. While the two projects have different objectives, they will share certain components, such as the display manager.
+
+## License
+
+Code added by AutumnBSD (e.g., `aprefetch`) is licensed under the BSD-2-Clause license. All other code is subject to the NetBSD license. For third-party components (such as those found in `external/`), please consult the individual source files and [doc/3RDPARTY](doc/3RDPARTY).
+
+## Contact
+
+Please submit bug reports or suggestions via [Issues](https://github.com/Serusion/AutumnBSD/issues) or by opening a Pull Request.
