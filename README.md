@@ -15,7 +15,9 @@ When using a laptop that is over a decade old—without upgrades like an SSD or 
 
 This feature records the files and FFS (Fast File System) metadata accessed during startup. On subsequent boots, it sorts these items based on their physical location on the disk and pre-fetches them in a single, efficient pass. It is designed to transform scattered, random disk accesses into a more streamlined, sequential sweep.
 
-On the target hardware used for testing, the time required for the userland to load (from the `init` process to the login prompt) was reduced from 16.2 seconds to 7.3 seconds (median value over 5 runs). When accounting for the removal of the wait time for the `postfix` service to start, this figure drops to 5.4 seconds (based on a single measurement). Pre-fetching for individual applications is not yet implemented. - [HDD Acceleration Specification](AutumnBSD_SPEC_HDD.md): Design, phased implementation, and performance measurement results.
+On the target hardware used for testing, the time required for the userland to load (from the `init` process to the login prompt) was reduced from 16.2 seconds to 7.3 seconds (median value over 5 runs). When accounting for the removal of the wait time for the `postfix` service to start, this figure drops to 5.4 seconds (based on a single measurement). Pre-fetching for individual applications is not yet implemented. 
+
+- [HDD Acceleration Specification](AutumnBSD_SPEC_HDD.md): Design, phased implementation, and performance measurement results.
 - [TLA+ Model](tla/aprefetch/README.md): Model checking for scenarios where prefetching occurs concurrently with standard read operations or unmount requests.
 - Manual pages: [aprefetch(4)](share/man/man4/aprefetch.4), [aprefd(8)](usr.sbin/aprefd/aprefd.8), [aprefctl(8)](usr.sbin/aprefctl/aprefctl.8)
 
