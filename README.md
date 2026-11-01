@@ -1,70 +1,66 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="autumn-logo/autumnbsd-lockup-dark.svg">
-    <img src="autumn-logo/autumnbsd-lockup.svg" alt="AutumnBSD" width="380">
-  </picture>
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="autumn-logo/autumnbsd-lockup-dark.svg">
+<img src="autumn-logo/autumnbsd-lockup.svg" alt="AutumnBSD" width="380">
+</picture>
 </p>
 
 # AutumnBSD
 
-古い PC をもう少し快適に使うための、NetBSD ベースのデスクトップ向け OS です。
+A NetBSD-based desktop OS designed to make older PCs more pleasant to use.
 
-10 年以上前のノート PC を、SSD への換装やメモリの増設なしで使っていると、待たされるのはたいてい HDD のシークか、メモリ不足によるスワップです。AutumnBSD は、その待ち時間を OS の側で減らすことを目指しています。
+When using a laptop that is over a decade old—without upgrades like an SSD or additional RAM—delays are typically caused by HDD seek times or swapping due to insufficient memory. AutumnBSD aims to reduce these wait times at the OS level.
 
-## いまあるもの: aprefetch
+## Current Feature: aprefetch
 
-起動時に読んだファイルと FFS のメタデータを記録しておき、次の起動では、それをディスク上の位置の順に並べ替えてまとめて先読みします。ばらばらのランダムアクセスを、1 回の掃引に近づけるための仕組みです。
+This feature records the files and FFS (Fast File System) metadata accessed during startup. On subsequent boots, it sorts these items based on their physical location on the disk and pre-fetches them in a single, efficient pass. It is designed to transform scattered, random disk accesses into a more streamlined, sequential sweep.
 
-下のターゲット機では、ユーザランド（init から login プロンプトまで）が 16.2 秒から 7.3 秒になりました（5 回の中央値）。postfix の起動を待たないようにした分も合わせると 5.4 秒です（まだ 1 回しか測っていません）。アプリ単位の先読みは、まだありません。
+On the target hardware used for testing, the time required for the userland to load (from the `init` process to the login prompt) was reduced from 16.2 seconds to 7.3 seconds (median value over 5 runs). When accounting for the removal of the wait time for the `postfix` service to start, this figure drops to 5.4 seconds (based on a single measurement). Pre-fetching for individual applications is not yet implemented. - [HDD Acceleration Specification](AutumnBSD_SPEC_HDD.md): Design, phased implementation, and performance measurement results.
+- [TLA+ Model](tla/aprefetch/README.md): Model checking for scenarios where prefetching occurs concurrently with standard read operations or unmount requests.
+- Manual pages: [aprefetch(4)](share/man/man4/aprefetch.4), [aprefd(8)](usr.sbin/aprefd/aprefd.8), [aprefctl(8)](usr.sbin/aprefctl/aprefctl.8)
 
-- [HDD 高速化の仕様書](AutumnBSD_SPEC_HDD.md): 設計、フェーズ分け、計測の結果
-- [TLA+ のモデル](tla/aprefetch/README.md): 先読みと、通常の読み込みやアンマウントが同時に起きる場合のモデル検査
-- マニュアル: [aprefetch(4)](share/man/man4/aprefetch.4)、[aprefd(8)](usr.sbin/aprefd/aprefd.8)、[aprefctl(8)](usr.sbin/aprefctl/aprefctl.8)
+## Future Work
 
-## これから
+- Compressed Memory (in design): Compresses data in RAM using LZ4 before it is swapped out—similar to `zram`. This will also serve as a temporary buffer for data that cannot yet be written to disk.
+- Display Manager (conceptual stage): A custom-built, low-dependency login screen. It begins prefetching the user session while the password is being entered.
+- Package Installation (under consideration): Consolidating post-installation tasks and `fsync` operations to reduce wait times on HDD-based systems.
 
-- 圧縮メモリ（設計中）: スワップに出す前に、RAM 上で LZ4 で圧縮します。zram のようなものです。書き出しきれないデータの一時置き場にも使うつもりです。
-- ディスプレイマネージャ（構想段階）: 依存の少ない、自作のログイン画面です。パスワードを打っている間に、セッションを先読みします。
-- パッケージのインストール（検討中）: 後処理や `fsync` をまとめて、HDD での待ち時間を減らします。
+## Design Philosophy
 
-## 方針
+- Performance is never pursued at the expense of correctness or data integrity. We strictly honor `fsync` guarantees, and the prefetching mechanism is designed so that any failure simply results in the data not being prefetched—with no negative impact on system stability or data safety.
+- Key design aspects are verified using formal methods; specifically, `aprefetch` has been validated through TLA+ model checking.
+- We maintain minimal dependencies while ensuring a polished, desktop-ready appearance.
 
-- 速さのために、正しさとデータの安全は削りません。`fsync` の約束は守りますし、先読みはどこで失敗しても「先読みしなかった」だけで済むように作ります。
-- 設計の要所は形式手法で確かめます。aprefetch は TLA+ でモデル検査しました。
-- 依存は少なく保ちます。それでも、デスクトップとしての見た目には気を配ります。
+## Target Hardware
 
-## ターゲット機
+The design and performance measurements are based on this specific hardware. - Model: NEC LaVie S LS150/F (laptop from around 2011)
+- CPU: Intel Pentium B950 (2.1GHz, 2 cores, 2 threads, no AES-NI)
+- Memory: 4GB
+- Storage: 512GB HDD
+- GPU: Intel HD Graphics (Sandy Bridge generation, i915)
 
-設計と計測は、この実機を基準にしています。
+## Building
 
-- 機種: NEC LaVie S LS150/F（2011 年ごろのノート PC）
-- CPU: Intel Pentium B950（2.1GHz、2 コア 2 スレッド、AES-NI なし）
-- メモリ: 4GB
-- ストレージ: 512GB HDD
-- GPU: Intel HD Graphics（Sandy Bridge 世代、i915）
+Installation images are not yet available for distribution.
 
-## ビルド
-
-インストール用のイメージは、まだ配布していません。
-
-ビルドの仕組みは NetBSD の `build.sh` そのままなので、UNIX 系の OS からクロスビルドできます。amd64 向けのリリースとインストールイメージを作るなら、リポジトリのルートで次のようにします。
+The build system is identical to NetBSD’s `build.sh`, allowing for cross-compilation from any UNIX-like OS. To create a release and installation image for the `amd64` architecture, run the following commands from the root of the repository:
 
 ```sh
 ./build.sh -U -u -j4 -m amd64 -O ~/obj release
 ./build.sh -U -u -j4 -m amd64 -O ~/obj install-image
 ```
 
-オプションについては [BUILDING](BUILDING) を見てください。
+For details on the available options, please refer to [BUILDING](BUILDING).
 
-## 関連プロジェクト
+## Related Projects
 
-- [NetBSD](https://www.NetBSD.org/): AutumnBSD のベースです。
-- KyanBSD: 姉妹プロジェクトです。FreeBSD をベースに、ハイパーバイザや Frama-C による形式検証など、データセンター向けの堅牢さを狙っています。向かう先は逆ですが、ディスプレイマネージャなど一部は共有する予定です。
+- [NetBSD](https://www.NetBSD.org/): The foundation for AutumnBSD.
+- KyanBSD: A sister project based on FreeBSD. It focuses on robustness for data center environments, incorporating features such as a hypervisor and formal verification using Frama-C. While the two projects have different objectives, they will share certain components, such as the display manager.
 
-## ライセンス
+## License
 
-AutumnBSD で足したコード（aprefetch など）は BSD-2-Clause です。それ以外は NetBSD のライセンスに従います。`external/` などのサードパーティのものについては、各ソースファイルと [doc/3RDPARTY](doc/3RDPARTY) を見てください。
+Code added by AutumnBSD (e.g., `aprefetch`) is licensed under the BSD-2-Clause license. All other code is subject to the NetBSD license. For third-party components (such as those found in `external/`), please consult the individual source files and [doc/3RDPARTY](doc/3RDPARTY).
 
-## 連絡先
+## Contact
 
-不具合の報告や提案は、[Issue](https://github.com/Serusion/AutumnBSD/issues) か Pull Request でどうぞ。
+Please submit bug reports or suggestions via [Issues](https://github.com/Serusion/AutumnBSD/issues) or by opening a Pull Request.
