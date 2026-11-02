@@ -23,7 +23,7 @@ On the target hardware used for testing, the time required for the userland to l
 
 ## Future Work
 
-- Compressed Memory (in design): Compresses data in RAM using LZ4 before it is swapped out—similar to `zram`. This will also serve as a temporary buffer for data that cannot yet be written to disk.
+- Compressed Memory, azram (phase 1 implemented, not yet measured on the target hardware): Keeps pages compressed in RAM using LZ4 before they are swapped out—similar to `zram`, except that pages that do not compress, or that would need memory when it is short, still go to the HDD swap as before. This will also serve as a temporary buffer for data that cannot yet be written to disk. [Specification](AutumnBSD_SPEC_MEMORY.md); manual pages: [azram(4)](share/man/man4/azram.4), [azramctl(8)](usr.sbin/azramctl/azramctl.8)
 - Display Manager (conceptual stage): A custom-built, low-dependency login screen. It begins prefetching the user session while the password is being entered.
 - Package Installation (under consideration): Consolidating post-installation tasks and `fsync` operations to reduce wait times on HDD-based systems.
 
@@ -61,7 +61,7 @@ For details on the available options, please refer to [BUILDING](BUILDING).
 
 ## License
 
-Code added by AutumnBSD (e.g., `aprefetch`) is licensed under the BSD-2-Clause license. All other code is subject to the NetBSD license. For third-party components (such as those found in `external/`), please consult the individual source files and [doc/3RDPARTY](doc/3RDPARTY).
+Code added by AutumnBSD (e.g., `aprefetch`, `azram`) is licensed under the BSD-2-Clause license. All other code is subject to the NetBSD license. For third-party components (such as those found in `external/`), please consult the individual source files and [doc/3RDPARTY](doc/3RDPARTY).
 
 ## Contact
 
