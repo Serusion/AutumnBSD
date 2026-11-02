@@ -1056,6 +1056,7 @@
 ./usr/share/man/cat4/axen.0			man-sys-catman		.cat
 ./usr/share/man/cat4/az.0			man-sys-catman		.cat
 ./usr/share/man/cat4/azalia.0			man-obsolete		obsolete
+./usr/share/man/cat4/azram.0			man-sys-catman		.cat
 ./usr/share/man/cat4/battery_pmu.0		man-sys-catman		.cat
 ./usr/share/man/cat4/bba.0			man-sys-catman		.cat
 ./usr/share/man/cat4/bce.0			man-sys-catman		.cat
@@ -2751,6 +2752,7 @@
 ./usr/share/man/cat8/automount.0		man-sysutil-catman	autofs,.cat
 ./usr/share/man/cat8/automountd.0		man-sysutil-catman	autofs,.cat
 ./usr/share/man/cat8/autounmountd.0		man-sysutil-catman	autofs,.cat
+./usr/share/man/cat8/azramctl.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/bad144.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/badsect.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/bebox/MAKEDEV.0		man-obsolete		obsolete
@@ -4670,6 +4672,7 @@
 ./usr/share/man/man4/axen.4			man-sys-man		.man
 ./usr/share/man/man4/az.4			man-sys-man		.man
 ./usr/share/man/man4/azalia.4			man-obsolete		obsolete
+./usr/share/man/man4/azram.4			man-sys-man		.man
 ./usr/share/man/man4/battery_pmu.4		man-sys-man		.man
 ./usr/share/man/man4/bba.4			man-sys-man		.man
 ./usr/share/man/man4/bce.4			man-sys-man		.man
@@ -6365,6 +6368,7 @@
 ./usr/share/man/man8/automount.8		man-sysutil-man		autofs,.man
 ./usr/share/man/man8/automountd.8		man-sysutil-man		autofs,.man
 ./usr/share/man/man8/autounmountd.8		man-sysutil-man		autofs,.man
+./usr/share/man/man8/azramctl.8			man-sysutil-man		.man
 ./usr/share/man/man8/bad144.8			man-sysutil-man		.man
 ./usr/share/man/man8/badsect.8			man-sysutil-man		.man
 ./usr/share/man/man8/bebox/MAKEDEV.8		man-obsolete		obsolete

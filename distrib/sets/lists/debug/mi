@@ -1080,6 +1080,7 @@
 ./usr/libdata/debug/usr/sbin/audit-packages.debug	comp-obsolete		obsolete
 ./usr/libdata/debug/usr/sbin/authpf.debug	comp-pf-debug		pf,debug
 ./usr/libdata/debug/usr/sbin/automount.debug	comp-sysutil-debug	autofs,debug
+./usr/libdata/debug/usr/sbin/azramctl.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/usr/sbin/bootpd.debug	comp-bootserver-debug	debug
 ./usr/libdata/debug/usr/sbin/bootpef.debug	comp-bootserver-debug	debug
 ./usr/libdata/debug/usr/sbin/bootpgw.debug	comp-bootserver-debug	debug

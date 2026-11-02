@@ -11,7 +11,7 @@ MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	an.4 aq.4 arcmsr.4 arcofi.4 aria.4 artsata.4 ata.4 atalk.4 ataraid.4 \
 	ath.4 athn.4 atphy.4 atppc.4 attimer.4 atw.4 \
 	auacer.4 audio.4 audiocs.4 auich.4 \
-	auixp.4 autri.4 auvia.4 awi.4 \
+	auixp.4 autri.4 auvia.4 awi.4 azram.4 \
 	battery_pmu.4 bba.4 bce.4 bcsp.4 be.4 bge.4 bnx.4 bha.4 \
 	bio.4 bktr.4 bochsfb.4 bluetooth.4 bmx280thp.4 bmtphy.4 bpf.4 bpfjit.4 \
 	bq4802rtc.4 brgphy.4 bridge.4 bthidev.4 bthub.4 btkbd.4 \

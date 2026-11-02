@@ -193,6 +193,7 @@
 ./etc/rc.d/automount				etc-sys-rc
 ./etc/rc.d/automountd				etc-sys-rc
 ./etc/rc.d/autounmountd				etc-sys-rc
+./etc/rc.d/azram				etc-sys-rc
 ./etc/rc.d/blacklistd				etc-obsolete		obsolete
 ./etc/rc.d/blocklistd				etc-sys-rc
 ./etc/rc.d/bluetooth				etc-sys-rc

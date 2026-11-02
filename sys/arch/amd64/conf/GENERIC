@@ -67,6 +67,8 @@ options 	SYSVMSG		# System V-like message queues
 options 	SYSVSEM		# System V-like semaphores
 options 	SYSVSHM		# System V-like memory sharing
 
+options 	AZRAM		# compressed cache in front of swap -- azram(4)
+
 options 	MODULAR		# new style module(7) framework
 options 	MODULAR_DEFAULT_AUTOLOAD
 options 	USERCONF	# userconf(4) support

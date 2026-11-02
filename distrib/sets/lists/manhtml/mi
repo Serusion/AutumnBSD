@@ -939,6 +939,7 @@
 ./usr/share/man/html4/axen.html			man-sys-htmlman		html
 ./usr/share/man/html4/az.html			man-sys-htmlman		html
 ./usr/share/man/html4/azalia.html		man-obsolete		obsolete
+./usr/share/man/html4/azram.html		man-sys-htmlman		html
 ./usr/share/man/html4/battery_pmu.html		man-sys-htmlman		html
 ./usr/share/man/html4/bba.html			man-sys-htmlman		html
 ./usr/share/man/html4/bce.html			man-sys-htmlman		html
@@ -2503,6 +2504,7 @@
 ./usr/share/man/html8/automount.html		man-sysutil-htmlman	autofs,html
 ./usr/share/man/html8/automountd.html		man-sysutil-htmlman	autofs,html
 ./usr/share/man/html8/autounmountd.html		man-sysutil-htmlman	autofs,html
+./usr/share/man/html8/azramctl.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/bad144.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/badsect.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/bioctl.html		man-sysutil-htmlman	raid,html

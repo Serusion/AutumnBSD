@@ -63,6 +63,9 @@ __KERNEL_RCSID(0, "$NetBSD: uvm_swap.c,v 1.236 2026/08/15 14:15:52 riastradh Exp
 #include <sys/workqueue.h>
 
 #include <uvm/uvm.h>
+#ifdef AZRAM
+#include <uvm/uvm_azram.h>
+#endif /* AZRAM */
 
 #include <miscfs/specfs/specdev.h>
 
@@ -218,6 +221,9 @@ static void sw_reg_iodone(struct work *wk, void *dummy);
 static void sw_reg_start(struct swapdev *);
 
 static int uvm_swap_io(struct vm_page **, int, int, int);
+#ifdef AZRAM
+static int uvm_swap_put_azram(int, struct vm_page **, int, int);
+#endif /* AZRAM */
 
 #ifdef VMSWAP_ENCRYPTION
 static void uvm_swap_genkey(struct swapdev *);
@@ -267,6 +273,10 @@ uvm_swap_init(void)
 	if (swapmap == 0) {
 		panic("%s: vmem_create failed", __func__);
 	}
+
+#ifdef AZRAM
+	azram_init();
+#endif /* AZRAM */
 
 	uvm_swap_init_done = true;
 
@@ -1137,6 +1147,10 @@ swap_on(struct lwp *l, struct swapdev *sdp)
 	sdp->swd_drumoffset = (int)result;
 	sdp->swd_drumsize = npages;
 	sdp->swd_npages = size;
+#ifdef AZRAM
+	/* Cover the slots in the azram index before any is allocated. */
+	azram_swapon(sdp->swd_drumoffset, sdp->swd_drumsize);
+#endif /* AZRAM */
 	mutex_enter(&uvm_swap_data_lock);
 	sdp->swd_flags &= ~SWF_FAKE;	/* going live */
 	sdp->swd_flags |= (SWF_INUSE|SWF_ENABLE);
@@ -1204,6 +1218,11 @@ swap_off(struct lwp *l, struct swapdev *sdp)
 
 		return error;
 	}
+
+#ifdef AZRAM
+	/* Everything was paged in; azram holds nothing of the device. */
+	azram_swapoff(sdp->swd_drumoffset, sdp->swd_drumsize);
+#endif /* AZRAM */
 
 	/*
 	 * If this is the last regular swap destroy the workqueue.
@@ -1866,6 +1885,11 @@ uvm_swap_markbad(int startslot, int nslots)
 	struct swapdev *sdp;
 	UVMHIST_FUNC(__func__); UVMHIST_CALLED(pdhist);
 
+#ifdef AZRAM
+	/* A bad slot is never read again. */
+	(void)azram_free(startslot, nslots);
+#endif /* AZRAM */
+
 	mutex_enter(&uvm_swap_data_lock);
 	sdp = swapdrum_getsdp(startslot);
 	KASSERT(sdp != NULL);
@@ -1904,6 +1928,14 @@ uvm_swap_free(int startslot, int nslots)
 		return;
 	}
 
+#ifdef AZRAM
+	/*
+	 * drop what azram holds for the slots before they can be
+	 * allocated again.
+	 */
+	(void)azram_free(startslot, nslots);
+#endif /* AZRAM */
+
 	/*
 	 * convert drum slot offset back to sdp, free the blocks
 	 * in the extent, and return.   must hold pri lock to do
@@ -1932,10 +1964,49 @@ uvm_swap_put(int swslot, struct vm_page **ppsp, int npages, int flags)
 {
 	int error;
 
+#ifdef AZRAM
+	if (azram_active())
+		return uvm_swap_put_azram(swslot, ppsp, npages, flags);
+	azram_count_swapwrite(npages);
+#endif /* AZRAM */
 	error = uvm_swap_io(ppsp, swslot, npages, B_WRITE |
 	    ((flags & PGO_SYNCIO) ? 0 : B_ASYNC));
 	return error;
 }
+
+#ifdef AZRAM
+/*
+ * uvm_swap_put_azram: offer the pages to azram first, write the rest.
+ *
+ * => the pages azram keeps are done at once, as if their write had
+ *	completed; the others go to swap in runs of consecutive slots.
+ */
+static int
+uvm_swap_put_azram(int swslot, struct vm_page **ppsp, int npages, int flags)
+{
+	bool stored[howmany(MAXPHYS, MIN_PAGE_SIZE)];
+	int error, error1, i, j;
+
+	KASSERT(npages <= __arraycount(stored));
+	azram_store(swslot, ppsp, npages, stored);
+
+	error = 0;
+	for (i = 0; i < npages; i = j) {
+		for (j = i + 1; j < npages && stored[j] == stored[i]; j++)
+			continue;
+		if (stored[i]) {
+			uvm_aio_aiodone_pages(&ppsp[i], j - i, true, 0);
+			continue;
+		}
+		azram_count_swapwrite(j - i);
+		error1 = uvm_swap_io(&ppsp[i], swslot + i, j - i, B_WRITE |
+		    ((flags & PGO_SYNCIO) ? 0 : B_ASYNC));
+		if (error == 0)
+			error = error1;
+	}
+	return error;
+}
+#endif /* AZRAM */
 
 /*
  * uvm_swap_get: get a single page from swap
@@ -1953,8 +2024,20 @@ uvm_swap_get(struct vm_page *page, int swslot, int flags)
 		return EIO;
 	}
 
+#ifdef AZRAM
+	if (azram_load(swslot, page)) {
+		error = 0;
+	} else {
+		const uint64_t t0 = azram_swapread_start();
+
+		error = uvm_swap_io(&page, swslot, 1, B_READ |
+		    ((flags & PGO_SYNCIO) ? 0 : B_ASYNC));
+		azram_swapread_done(t0);
+	}
+#else /* !AZRAM */
 	error = uvm_swap_io(&page, swslot, 1, B_READ |
 	    ((flags & PGO_SYNCIO) ? 0 : B_ASYNC));
+#endif /* AZRAM */
 	if (error == 0) {
 		/*
 		 * this page is no longer only in swap.

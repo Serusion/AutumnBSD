@@ -3537,6 +3537,7 @@
 ./usr/include/sys/ataio.h			comp-c-include
 ./usr/include/sys/atomic.h			comp-c-include
 ./usr/include/sys/audioio.h			comp-c-include
+./usr/include/sys/azram.h			comp-c-include
 ./usr/include/sys/bitops.h			comp-c-include
 ./usr/include/sys/bootblock.h			comp-c-include
 ./usr/include/sys/bootinfo.h			comp-obsolete		obsolete

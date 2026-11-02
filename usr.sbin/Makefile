@@ -4,7 +4,7 @@
 .include <bsd.own.mk>
 
 SUBDIR=	ac accton acpitools altq apm apmd aprefctl aprefd arp \
-	bad144 bootp catman \
+	azramctl bad144 bootp catman \
 	certctl chroot cpuctl crash \
 	dev_mkdb diskpart dumpfs \
 	edquota eeprom emcfanctl envstat etcupdate extattrctl \

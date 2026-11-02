@@ -32,7 +32,7 @@
 .\"
 .\"     @(#)boot_i386.8	8.2 (Berkeley) 4/19/94
 .\"
-.Dd October 31, 2026
+.Dd November 2, 2026
 .Dt BOOT 8 x86
 .Os
 .Sh NAME
@@ -314,8 +314,10 @@ in
 In
 .Nx Ns /x86 ,
 this turns off the recording and prefetch of boot-time file reads
-for this boot; see
-.Xr aprefetch 4 .
+for this boot, see
+.Xr aprefetch 4 ,
+and keeps the compressed cache in front of swap off, see
+.Xr azram 4 .
 .It Fl a
 Sets the
 .Dv RB_ASKNAME

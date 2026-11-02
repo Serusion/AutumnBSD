@@ -1,0 +1,221 @@
+.\"	$NetBSD$
+.\"
+.\" Copyright (c) 2026 yuragi
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd November 2, 2026
+.Dt AZRAM 4
+.Os
+.Sh NAME
+.Nm azram
+.Nd compressed cache in front of swap
+.Sh SYNOPSIS
+.Cd "options AZRAM"
+.Sh DESCRIPTION
+.Nm
+keeps anonymous pages that are about to be written to swap in memory
+instead, compressed with LZ4.
+A page faulted back in from
+.Nm
+is decompressed in microseconds, where reading it from a hard disk takes
+milliseconds.
+.Pp
+.Nm
+sits in front of a swap device and does not replace one: each page it keeps
+has its slot on a swap device, allocated as usual, and
+.Nm
+can always decline a page and let it be written to that slot.
+It does so for a page that does not compress well, when its pool is full,
+and when memory is short, so that the system pages no worse than without
+.Nm .
+At least one swap device must be configured; see
+.Xr swapctl 8 .
+.Ss Pageout
+When the pagedaemon writes a cluster of pages to swap,
+.Nm
+looks at each page first.
+A page whose bytes all have the same value, such as a page of zeros, is
+kept as that value alone.
+Any other page is compressed; it is kept if it shrinks to
+.Va vm.azram.reject_size
+bytes or less, and if its pool can take it without growing beyond
+.Va vm.azram.pool_max .
+The pages kept are done at once; the others are written to the swap
+device, the consecutive ones in one write each.
+.Pp
+The compressed data goes to a pool with a size class per 1/64 page, up to
+7/8 page.
+Each class takes memory in chunks of 2 to 16 pages, so that little is
+lost to rounding;
+.Va vm.azram.pool_max
+counts the memory of these chunks, however full they are.
+.Pp
+.Nm
+never waits for memory, and leaves the kernel's reserve of free pages
+alone: when free memory is that low, a page that would need more memory
+for the pool goes to the swap device, while one that fits in the memory
+the pool has already is still kept.
+The buffers for compression are allocated at boot.
+.Ss Pagein
+A page fault on a page that went to swap asks
+.Nm
+before it reads the swap device.
+The page stays in
+.Nm
+afterwards, as long as the system keeps its swap slot: if the page is
+paged out again unchanged, it need not be compressed again.
+When a process exits or frees the memory, or the page changes, the slot is
+freed and so is the compressed copy.
+.Pp
+A compressed page that does not decompress to exactly one page means that
+memory is corrupt; the system panics rather than give a process wrong
+data.
+.Ss Swap devices
+Removing a swap device with
+.Xr swapctl 8
+pages in everything it holds, from
+.Nm
+or from the device, as without
+.Nm .
+.Pp
+The swap usage that
+.Xr swapctl 8
+and
+.Xr vmstat 1
+report includes the pages
+.Nm
+holds, since they keep their slots.
+.Xr azramctl 8
+shows how much
+.Nm
+holds and how much went to the device.
+.Ss Measuring
+With
+.Va vm.azram.measure
+set and
+.Va vm.azram.enable
+clear, every page on its way to swap is compressed only to count its size,
+and then written to the swap device as without
+.Nm .
+.Xr azramctl 8
+shows these sizes and what each value of
+.Va vm.azram.reject_size
+would keep.
+The counters of reads from the swap device, and of the time they take,
+work with
+.Nm
+off too.
+.Ss Turning it on and off
+.Va vm.azram.enable
+is 0 when the system boots.
+.Pa /etc/rc.d/azram
+sets it if
+.Va azram
+is set in
+.Xr rc.conf 5 ,
+as it is by default.
+Clearing it stops
+.Nm
+from taking new pages; the pages it holds can still be paged in.
+.Pp
+On x86, booting with the
+.Fl 4
+flag of
+.Xr boot 8 ,
+which the default boot menu offers as
+.Dq Boot without prefetch or azram ,
+keeps
+.Pa /etc/rc.d/azram
+from turning
+.Nm
+on for that boot.
+.Sh SYSCTL VARIABLES
+.Bl -tag -width vm.azram.boot_disabled
+.It Va vm.azram.enable
+Keep pages in
+.Nm ;
+0 at boot.
+.It Va vm.azram.measure
+Compress the pages that go to swap only to count their sizes, while
+.Va vm.azram.enable
+is clear; 0 by default.
+.It Va vm.azram.pool_max
+Bytes of memory the compressed pages may take, at most the size of
+physical memory; a quarter of it by default.
+Lowering it below what the pool holds now only stops the pool from
+growing.
+.It Va vm.azram.reject_size
+Largest size, in bytes, that a compressed page may have to be kept, from
+1/64 to 7/8 page; 3/4 page (3072 bytes with 4 KB pages) by default.
+.It Va vm.azram.boot_disabled
+Read-only: 1 if the boot flag kept
+.Nm
+off for this boot.
+.It Va vm.azram.stats
+.Vt struct azram_stats ,
+as defined in
+.In sys/azram.h :
+what
+.Nm
+holds now (pages kept compressed and of one value, the size of their data,
+the memory of the pool and of the metadata), and counters of the pages
+offered, kept and declined for each reason, paged in, and freed, the time
+spent compressing and decompressing, the pages written to and read from
+the swap device and the time spent waiting for those reads, and the
+compressed sizes of the pages looked at.
+Writing it, which only root may do, resets the counters.
+.El
+.Sh SEE ALSO
+.Xr vmstat 1 ,
+.Xr rc.conf 5 ,
+.Xr azramctl 8 ,
+.Xr boot 8 ,
+.Xr swapctl 8
+.Sh HISTORY
+.Nm
+was written for AutumnBSD.
+.Sh CAVEATS
+When the pool reaches
+.Va vm.azram.pool_max ,
+new pages go to the swap device while older ones stay in memory, even if
+they will not be needed for a long time.
+.Nm
+does not write its pages out to the swap device yet.
+.Pp
+Swap encryption
+.Pq Va vm.swap_encrypt
+applies to what is written to the swap device only; the pages
+.Nm
+holds are in memory, like any other memory of a process, and are part of a
+crash dump.
+.Pp
+How long a page fault takes depends on whether the page was in
+.Nm ,
+and so on how well its contents compress.
+.Sh BUGS
+A compressed page that is freed leaves a hole in its chunk; the pool does
+not move pages to fill such holes, so a fragmented pool may hold more
+memory than its data needs.
+.Xr azramctl 8
+shows how much.

@@ -95,6 +95,8 @@ options 	SEMUME=10	# max number of undo entries per process
 options 	SEMMNU=30	# number of undo structures in system
 options 	SYSVSHM		# System V-like memory sharing
 
+options 	AZRAM		# compressed cache in front of swap
+
 options 	MODULAR		# new style module(7) framework
 options 	MODULAR_DEFAULT_AUTOLOAD
 options 	MODULAR_DEFAULT_VERBOSE

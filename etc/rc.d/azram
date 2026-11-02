@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# $NetBSD$
+#
+
+# PROVIDE: azram
+# REQUIRE: sysctl
+# BEFORE:  localswap
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name="azram"
+rcvar=$name
+start_cmd="azram_start"
+stop_cmd="azram_stop"
+
+azram_start()
+{
+	if ! /sbin/sysctl -q vm.azram.enable; then
+		echo "azram: not in this kernel."
+		return 0
+	fi
+	if [ "$(/sbin/sysctl -n vm.azram.boot_disabled)" = 1 ]; then
+		echo "azram: off for this boot (boot flag)."
+		return 0
+	fi
+	/sbin/sysctl -qw vm.azram.enable=1
+}
+
+azram_stop()
+{
+	/sbin/sysctl -qw vm.azram.enable=0
+}
+
+load_rc_config $name
+run_rc_command "$1"
