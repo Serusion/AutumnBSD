@@ -1,0 +1,16 @@
+#	$NetBSD$
+#
+# LZ4 block compression, from the upstream library in dist/.
+# See lz4_kern.c for the build settings.
+
+define		lz4
+
+makeoptions	lz4	"CPPFLAGS.lz4"+="-I$S/external/bsd/lz4/include"
+makeoptions	lz4	"CPPFLAGS.lz4"+="-I$S/external/bsd/lz4/dist"
+makeoptions	lz4	"CPPFLAGS.lz4"+="-DLZ4_HEAPMODE=1"
+makeoptions	lz4	"CPPFLAGS.lz4"+="-DLZ4_USER_MEMORY_FUNCTIONS"
+
+makeoptions	lz4	"CWARNFLAGS.lz4"+="-Wno-missing-prototypes"
+
+file	external/bsd/lz4/dist/lz4.c		lz4
+file	external/bsd/lz4/lz4_kern.c		lz4

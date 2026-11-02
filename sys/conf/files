@@ -235,6 +235,9 @@ include "crypto/blake2/files.blake2s"
 # Various cryptography functions
 include "crypto/sodium/files.sodium"
 
+# LZ4 block compression
+include "external/bsd/lz4/conf/files.lz4"
+
 #
 # Kernel history/tracing. Old UVMHIST depends upon this.
 #

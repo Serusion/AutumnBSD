@@ -2379,6 +2379,23 @@ License:	bsd
 Location:	sys/external/bsd/libsodium
 Notes:
 
+Package:	lz4
+Version:	1.10.0
+Current Vers:	1.10.0
+Maintainer:	Yann Collet
+Archive Site:	https://github.com/lz4/lz4/releases
+Home Page:	https://lz4.org/
+Date:		2026-11-02
+Mailing List:
+Responsible:	yuragi
+License:	BSD (2-clause)
+Location:	sys/external/bsd/lz4
+Notes:
+AutumnBSD.  Only lib/lz4.c, lib/lz4.h and lib/LICENSE of the release
+are imported, unchanged, into dist/.  The kernel builds them with the
+headers in include/ and the settings in conf/files.lz4, which lz4_kern.c
+explains.  Used by azram(4).
+
 Package:	Sensirion VOC index algorithm
 Version:	git commit hash 4f69c0d8e2f7192aeaf0d268211b1f54af50146b
 Current Vers:	git commit hash 4f69c0d8e2f7192aeaf0d268211b1f54af50146b
