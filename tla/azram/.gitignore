@@ -1,0 +1,6 @@
+# TLC を -metadir なしで回したときの作業ディレクトリと、反例から生成される仕様
+states/
+*_TTrace_*.tla
+*_TTrace_*.bin
+# pcal.trans が翻訳し直すときに残す、翻訳前のファイル
+*.old
