@@ -1,9 +1,0 @@
-@comment $NetBSD$
-share/doc/autumn-fonts/OFL-Outfit.txt
-share/doc/autumn-fonts/OFL-ZenKakuGothicNew.txt
-share/fonts/X11/TTF/Outfit-VariableFont_wght.ttf
-share/fonts/X11/TTF/ZenKakuGothicNew-Black.ttf
-share/fonts/X11/TTF/ZenKakuGothicNew-Bold.ttf
-share/fonts/X11/TTF/ZenKakuGothicNew-Light.ttf
-share/fonts/X11/TTF/ZenKakuGothicNew-Medium.ttf
-share/fonts/X11/TTF/ZenKakuGothicNew-Regular.ttf
