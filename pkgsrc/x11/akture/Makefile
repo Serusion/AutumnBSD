@@ -1,10 +1,10 @@
 # $NetBSD$
 
-DISTNAME=	akture-0.0.20261103
+DISTNAME=	akture-0.0.20261103.1
 CATEGORIES=	x11
 MASTER_SITES=	${MASTER_SITE_GITHUB:=Serusion/}
 GITHUB_PROJECT=	Akture
-GITHUB_TAG=	9cb90b9e4ec97655478f0c55bfaead158ab32a3c
+GITHUB_TAG=	45e61d809bd9b61bc3053adaf1a42d1f8aa000af
 
 MAINTAINER=	pkgsrc-users@NetBSD.org
 HOMEPAGE=	https://github.com/Serusion/Akture
@@ -25,7 +25,14 @@ MAKE_FLAGS+=	AKTURE_ETCDIR=${PKG_SYSCONFDIR}
 MAKE_FLAGS+=	AKTURE_DBDIR=${VARBASE}/db/akture
 MAKE_FLAGS+=	AKTURE_RUNDIR=${VARBASE}/run/akture
 MAKE_FLAGS+=	AKTURE_XSERVER=${X11BASE}/bin/X
+MAKE_FLAGS+=	AKTURE_FONT_UI=${AKTURE_FONT_UI}
+MAKE_FLAGS+=	AKTURE_FONT_CLOCK=${AKTURE_FONT_CLOCK}
 MAKE_FLAGS+=	MKDEBUG=no
+
+# The default fonts, from fonts/autumn-fonts.
+DEPENDS+=		autumn-fonts-[0-9]*:../../fonts/autumn-fonts
+AKTURE_FONT_UI=		${PREFIX}/share/fonts/X11/TTF/Outfit-VariableFont_wght.ttf
+AKTURE_FONT_CLOCK=	${PREFIX}/share/fonts/X11/TTF/ZenKakuGothicNew-Light.ttf
 
 PKG_SYSCONFSUBDIR=	akture
 EGDIR=			${PREFIX}/share/examples/akture
@@ -56,7 +63,7 @@ REQD_FILES_PERMS+=	${EGDIR}/resolutions \
 			${VARBASE}/db/akture/resolutions \
 			_akture _akture 0644
 
-INSTALLATION_DIRS+=	share/akture/backgrounds share/akture/fonts
+INSTALLATION_DIRS+=	share/akture/backgrounds
 
 SUBST_CLASSES+=		paths
 SUBST_STAGE.paths=	pre-configure
@@ -67,6 +74,8 @@ SUBST_FILES.paths+=	akture-greeter/akture-greeter.8
 SUBST_FILES.paths+=	akture-conv/akture-conv.1
 SUBST_SED.paths=	-e 's,/usr/pkg/,${PREFIX}/,g'
 SUBST_SED.paths+=	-e 's,/etc/akture,${PKG_SYSCONFDIR},g'
+SUBST_SED.paths+=	-e 's,/usr/share/akture/fonts/Outfit.ttf,${AKTURE_FONT_UI},g'
+SUBST_SED.paths+=	-e 's,/usr/share/akture/fonts/ZenKakuGothicNew-Light.ttf,${AKTURE_FONT_CLOCK},g'
 SUBST_SED.paths+=	-e 's,/usr/share/akture,${PREFIX}/share/akture,g'
 SUBST_SED.paths+=	-e 's,/usr/libexec/akture-greeter,${PREFIX}/libexec/akture-greeter,g'
 SUBST_SED.paths+=	-e 's,/usr/X11R7/bin/X,${X11BASE}/bin/X,g'

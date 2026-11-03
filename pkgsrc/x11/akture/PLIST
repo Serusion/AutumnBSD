@@ -12,5 +12,4 @@ share/examples/akture/pam.d/akture
 share/examples/akture/pam.d/akture-autologin
 share/examples/akture/resolutions
 share/examples/akture/sessions/fluxbox
-@pkgdir share/akture/fonts
 @pkgdir share/akture/backgrounds

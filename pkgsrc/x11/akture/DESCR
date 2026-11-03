@@ -7,6 +7,5 @@ and reads the keyboard with libxkbcommon.  The messages between the
 two, the state machine of the master and its parsers are verified with
 Frama-C and TLA+.
 
-To use it, set akture=YES in /etc/rc.conf.  The login screen needs the
-fonts Outfit and Zen Kaku Gothic New in share/akture/fonts, or others
-set with font_ui and font_clock in akture.conf.
+To use it, set akture=YES in /etc/rc.conf.  Its default fonts, Outfit
+and Zen Kaku Gothic New, come from fonts/autumn-fonts.
