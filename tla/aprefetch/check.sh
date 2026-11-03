@@ -62,6 +62,9 @@ check MC_bug_L1_reads.cfg		'Temporal property ReadsComplete was violated.'
 check MC_bug_L2_unmount.cfg		'Temporal property UnmountCompletes was violated.'
 check MC_bug_L3a_terminate.cfg		'Temporal property ReplayTerminates was violated.'
 check MC_bug_L3b_release.cfg		'Temporal property ReplayReleasesAll was violated.'
+check MC_bug_S2b_launch_unmount.cfg	'Invariant UnmountedNoRefs is violated.'
+check MC_bug_S4_stray_cancel.cfg	'Invariant CancelOnlyTarget is violated.'
+check MC_bug_S5_stop_wait.cfg		'Invariant StopWaitsEnd is violated.'
 
 echo '-- 到達確認（違反が出るのが正しい）'
 for w in $(sed -n 's/^\(Reach_[A-Za-z]*\) ==.*/\1/p' MC_reach.tla); do
