@@ -24,12 +24,12 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 1, 2026
+.Dd November 3, 2026
 .Dt APREFETCH 4
 .Os
 .Sh NAME
 .Nm aprefetch
-.Nd record boot-time file reads and prefetch them on the next boot
+.Nd record file reads and prefetch them on the next boot or login
 .Sh SYNOPSIS
 .Cd "pseudo-device aprefetch"
 .Sh DESCRIPTION
@@ -39,6 +39,11 @@ driver records which pages of which files, and which metadata blocks, are
 read while the system boots.
 On the next boot it reads them ahead, in the order of their blocks on the
 disk, so that one sweep of the disk replaces the seeks of a cold boot.
+The start of a login session is recorded and prefetched in the same way,
+with
+.Xr aprefd 8
+and
+.Xr aprefctl 8 .
 Only FFS file systems are recorded and prefetched: the data of regular
 files, and as metadata the blocks of directories and symbolic links and
 the blocks that hold inodes and the other structures of the file system.
@@ -78,6 +83,12 @@ on
 or after
 .Va kern.aprefetch.record_timeout
 seconds.
+Other windows are opened with
+.Dv APREFIOC_RECSTART ,
+as
+.Xr aprefd 8
+does for a login session, and close in the same way.
+One window is open at a time, and it records the reads of every process.
 .Pp
 .Xr read 2
 returns
@@ -86,6 +97,8 @@ entries, as defined in
 .In sys/aprefetch.h .
 It waits while the window is open and no entry is available, and returns
 end-of-file once the window has closed and every entry has been read.
+A new window discards the entries left from the last one, so these must
+be read to the end before it opens.
 .Ss Replay
 After the root file system is mounted, a kernel thread reads the boot
 profile
@@ -127,15 +140,26 @@ The budget is charged when a read is issued, not when it completes.
 The replay stops when everything has been issued, when the budget is used
 up, after
 .Va kern.aprefetch.replay_timeout
-seconds, when free memory falls below twice the pagedaemon target, or when
+seconds, when free memory falls below twice the pagedaemon target, when
 .Va kern.aprefetch.enable
-is cleared.
+is cleared, or when it is cancelled with
+.Dv APREFIOC_REPLAYSTOP .
 However it stops, it waits for its reads to complete before it releases
 the files.
+.Pp
+A process can have another profile replayed with
+.Dv APREFIOC_REPLAY ,
+such as the profile of a login session.
+The image goes through the same checks as the boot profile, except for
+those of the file, which
+.Xr aprefctl 8
+makes.
+Only one replay runs at a time.
 .Ss Unmounting
 Before an unmount suspends a file system, the replay drops the entries it
 has not processed there, waits for its reads on that file system, releases
 its files and only then lets the unmount continue.
+Until the file system is suspended, no new replay starts.
 The replay therefore never makes an unmount fail or wait for long.
 .Ss Marks
 A
@@ -172,7 +196,7 @@ The following
 .Xr ioctl 2
 commands are defined in
 .In sys/aprefetch.h :
-.Bl -tag -width APREFIOC_GETMARKS
+.Bl -tag -width APREFIOC_REPLAYSTOP
 .It Dv APREFIOC_STATUS Fa "struct aprefetch_status"
 Whether a window is open, since when, and whether a replay is running.
 .It Dv APREFIOC_RECSTART
@@ -195,7 +219,14 @@ Replay a profile image now, with the given budget or
 .Va kern.aprefetch.app_budget .
 Fails with
 .Er EBUSY
-if a replay is running.
+if a replay is running, or an unmount is about to suspend a file system.
+.It Dv APREFIOC_REPLAYSTOP
+Cancel the running replay, and wait until it has ended, that is until its
+reads are over and its files are released.
+A replay started meanwhile is neither cancelled nor waited for.
+Fails with
+.Er ESRCH
+if no replay is running.
 .El
 .Sh SYSCTL VARIABLES
 .Bl -tag -width kern.aprefetch.replay_timeout
@@ -220,8 +251,8 @@ entries recorded and dropped, reads of file data and of metadata served
 from memory or not, and for the replays the entries taken, dropped as stale
 and deferred, the reads and pages issued, the pages that were in memory
 already, the pages lost to errors, the metadata blocks read ahead and those
-that were in memory already, how the last replay ended and how long it
-took.
+that were in memory already, how many replays stopped early, cancelled
+ones included, and how the last replay ended and how long it took.
 .El
 .Sh FILES
 .Bl -tag -width /etc/aprefetch/boot.prof -compact
@@ -233,6 +264,8 @@ the boot profile
 the traces from which
 .Xr aprefd 8
 builds the profile
+.It Pa /var/db/aprefetch/session
+the traces and profiles of login sessions
 .El
 .Sh SEE ALSO
 .Xr aprefctl 8 ,
@@ -243,8 +276,12 @@ The
 .Nm
 driver was written for AutumnBSD.
 .Sh CAVEATS
-File system metadata, such as inodes and directories, is neither recorded
-nor prefetched.
+Indirect blocks are not recorded; the replay reads them as it maps the
+files, one at a time.
 .Pp
-The profile and the traces record which files were read and when.
+A window records the reads of every process, so the profile of a login
+session also has what other processes read meanwhile, unless only one
+trace has it.
+.Pp
+The profiles and the traces record which files were read and when.
 They are readable by root only, and record inode numbers, not file names.

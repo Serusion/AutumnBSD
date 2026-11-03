@@ -966,6 +966,9 @@ dounmount(struct mount *mp, int flags, struct lwp *l)
 		aprefetch_unmount(mp);
 #endif
 		error = vfs_suspend(mp, 0);
+#if NAPREFETCH > 0
+		aprefetch_unmount_done(mp);
+#endif
 		if (error) {
 			return error;
 		}

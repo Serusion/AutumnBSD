@@ -162,6 +162,7 @@ struct aprefetch_trace_hdr {
 #define	APREF_END_DISABLED	5	/* kern.aprefetch.enable was cleared */
 #define	APREF_END_NOPROFILE	6	/* no boot profile */
 #define	APREF_END_BADPROFILE	7	/* the profile failed validation */
+#define	APREF_END_CANCEL	8	/* stopped with APREFIOC_REPLAYSTOP */
 
 struct aprefetch_status {
 	int32_t		as_window;	/* APREF_WIN_* */
@@ -233,6 +234,7 @@ struct aprefetch_replay {
 #define	APREFIOC_GETMARKS	_IOWR('y', 5, struct aprefetch_marks)
 #define	APREFIOC_BMAP		_IOWR('y', 6, struct aprefetch_bmap)
 #define	APREFIOC_REPLAY		_IOW('y', 7, struct aprefetch_replay)
+#define	APREFIOC_REPLAYSTOP	_IO('y', 8)
 
 #ifdef _KERNEL
 struct buf;
@@ -249,6 +251,7 @@ void	aprefetch_boot(void);
 void	aprefetch_kmark(const char *);
 void	aprefetch_mount(struct mount *);
 void	aprefetch_unmount(struct mount *);
+void	aprefetch_unmount_done(struct mount *);
 #endif /* _KERNEL */
 
 #endif /* !_SYS_APREFETCH_H_ */

@@ -12,6 +12,7 @@ auth		include		system
 account		requisite	pam_securetty.so
 account		required	pam_login_access.so
 account		include		system
+account		optional	pam_exec.so	/usr/libexec/aprefetch-login
 
 # session
 session		optional	pam_exec.so	/usr/sbin/aprefctl boot-done

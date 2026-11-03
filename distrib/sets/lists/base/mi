@@ -1314,6 +1314,7 @@
 ./usr/libexec/atf-exec				base-obsolete		obsolete
 ./usr/libexec/atf-format			base-obsolete		obsolete
 ./usr/libexec/atf-killpg			base-obsolete		obsolete
+./usr/libexec/aprefetch-login			base-sysutil-bin
 ./usr/libexec/atrun				base-cron-bin
 ./usr/libexec/bozohttpd				base-netutil-bin
 ./usr/libexec/ching				base-games-usr
@@ -6458,6 +6459,7 @@
 ./var/cron/tabs					base-cron-root
 ./var/db					base-sys-root
 ./var/db/aprefetch				base-sys-root
+./var/db/aprefetch/session			base-sys-root
 ./var/db/dhcpcd					base-dhcpcd-root
 ./var/db/ns					base-sys-root
 ./var/db/obsolete				base-sys-root

@@ -27,17 +27,32 @@
  */
 
 /*
- * aprefd: collect the access entries of the boot recording window from
- * /dev/aprefetch, save them as a trace, and rebuild the boot profile
- * from the last few traces.
+ * aprefd: collect the access entries of a recording window from
+ * /dev/aprefetch, save them as a trace, and rebuild a profile from the
+ * last few traces.
+ *
+ * Without -s the window is the boot window, and the profile the boot
+ * profile.  With -s, aprefd opens a window for a login session, closes
+ * it once the reads that miss the cache have stopped, and keeps the
+ * traces and the profile of that user and session in APREF_SESSDIR.
+ *
+ * All windows go through the same rings, and read(2) cannot tell one
+ * window from the next: opening a window discards what is left of the
+ * last one, and a reader of the last one would go on reading the new
+ * one.  So each aprefd holds an exclusive flock(2) on the device while
+ * it reads, and a session waits for it until the boot aprefd has read
+ * the boot window to the end.
  */
 
 #include <sys/cdefs.h>
 __RCSID("$NetBSD$");
 
 #include <sys/param.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,6 +66,7 @@ __RCSID("$NetBSD$");
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 #include <util.h>
 
@@ -59,6 +75,17 @@ __RCSID("$NetBSD$");
 #define	MAXKEEP		9		/* traces kept at most */
 #define	MAXPAGES	(1024 * 1024)	/* distinct pages in a profile */
 #define	MAXBLOCKS	(256 * 1024)	/* distinct metadata blocks */
+#define	MAXSESSION	64		/* length of a session name */
+#define	LOCKWAIT	10		/* seconds a session waits to read */
+#define	POLLMS		100		/* msec between looks at a session */
+
+/* The entries collected so far. */
+struct tracebuf {
+	struct aprefetch_rec	*tb_recs;
+	size_t			 tb_n;
+	size_t			 tb_max;
+	size_t			 tb_lost;	/* past APREF_TRACEMAX */
+};
 
 /* A page seen in the traces. */
 struct page {
@@ -141,12 +168,67 @@ onsignal(int sig)
 	quit = 1;
 }
 
+/* Add n entries; those past APREF_TRACEMAX are only counted. */
+static int
+addrecs(struct tracebuf *tb, const struct aprefetch_rec *rec, size_t n)
+{
+	struct aprefetch_rec *nrecs;
+	size_t max;
+
+	if (tb->tb_n + n > APREF_TRACEMAX) {
+		tb->tb_lost += n;
+		return 0;
+	}
+	if (tb->tb_n + n > tb->tb_max) {
+		max = MAX(tb->tb_max, 4096);
+		while (max < tb->tb_n + n)
+			max *= 2;
+		max = MIN(max, APREF_TRACEMAX);
+		if ((nrecs = realloc(tb->tb_recs, max * sizeof(*nrecs))) ==
+		    NULL) {
+			logmsg(LOG_ERR, "out of memory");
+			return -1;
+		}
+		tb->tb_recs = nrecs;
+		tb->tb_max = max;
+	}
+	memcpy(&tb->tb_recs[tb->tb_n], rec, n * sizeof(*rec));
+	tb->tb_n += n;
+	return 0;
+}
+
+/*
+ * Take the lock of the readers of the device, waiting for ever, or at
+ * most wait seconds.
+ */
+static int
+lockdev(int fd, unsigned int wait)
+{
+	const struct timespec nap = { 0, POLLMS * 1000000L };
+	unsigned int n;
+
+	if (wait == 0) {
+		while (flock(fd, LOCK_EX) == -1) {
+			if (errno != EINTR || quit)
+				return -1;
+		}
+		return 0;
+	}
+	for (n = 0; flock(fd, LOCK_EX | LOCK_NB) == -1; n++) {
+		if (errno != EWOULDBLOCK || quit)
+			return -1;
+		if (n >= wait * (1000 / POLLMS))
+			return -1;
+		(void)nanosleep(&nap, NULL);
+	}
+	return 0;
+}
+
 /* Read access entries until the window closes and the device says EOF. */
 static int
-collect(int fd, struct aprefetch_rec **recsp, uint32_t *np)
+collect(int fd, struct tracebuf *tb)
 {
-	struct aprefetch_rec buf[256], *recs = NULL, *nrecs;
-	size_t n = 0, max = 0, got, lost = 0;
+	struct aprefetch_rec buf[256];
 	ssize_t len;
 
 	for (;;) {
@@ -156,67 +238,150 @@ collect(int fd, struct aprefetch_rec **recsp, uint32_t *np)
 			if (errno != EINTR)
 				logmsg(LOG_ERR, "read %s: %s", APREFETCH_DEV,
 				    strerror(errno));
-			free(recs);
 			return -1;
 		}
 		if (len == 0)
-			break;
-		got = (size_t)len / sizeof(buf[0]);
-		if (n + got > APREF_TRACEMAX) {
-			lost += got;
+			return 0;
+		if (addrecs(tb, buf, (size_t)len / sizeof(buf[0])) == -1)
+			return -1;
+	}
+}
+
+/*
+ * Collect the entries of a session window, which the caller has opened
+ * and fd reads without waiting.  Close the window once no read has
+ * missed the cache for idle msec, or after limit msec, and read the
+ * rest up to EOF.  The entries still being merged are flushed before
+ * the window is closed, in case they hold a miss.  A window closed by
+ * the kernel, on kern.aprefetch.record_timeout, ends in the same way.
+ */
+static int
+collect_session(int fd, struct tracebuf *tb, uint64_t idle, uint64_t limit)
+{
+	const struct timespec nap = { 0, POLLMS * 1000000L };
+	struct aprefetch_rec buf[256];
+	struct aprefetch_status as;
+	uint64_t now = 0, lastmiss = 0;
+	bool flushed = false, stopped = false;
+	ssize_t len;
+	size_t i, n;
+
+	for (;;) {
+		if ((len = read(fd, buf, sizeof(buf))) > 0) {
+			n = (size_t)len / sizeof(buf[0]);
+			for (i = 0; i < n; i++) {
+				if ((buf[i].ar_flags & APREF_REC_MISS) != 0)
+					lastmiss = MAX(lastmiss,
+					    buf[i].ar_msec);
+			}
+			if (addrecs(tb, buf, n) == -1)
+				goto fail;
 			continue;
 		}
-		if (n + got > max) {
-			max = MAX(max, 4096);
-			while (max < n + got)
-				max *= 2;
-			max = MIN(max, APREF_TRACEMAX);
-			if ((nrecs = realloc(recs, max * sizeof(*recs))) == NULL) {
-				logmsg(LOG_ERR, "out of memory");
-				free(recs);
-				return -1;
-			}
-			recs = nrecs;
+		if (len == 0)
+			break;
+		if (errno != EAGAIN && errno != EINTR) {
+			logmsg(LOG_ERR, "read %s: %s", APREFETCH_DEV,
+			    strerror(errno));
+			goto fail;
 		}
-		memcpy(&recs[n], buf, got * sizeof(buf[0]));
-		n += got;
+		if (quit)
+			goto fail;
+		if (!stopped) {
+			if (ioctl(fd, APREFIOC_STATUS, &as) == -1) {
+				logmsg(LOG_ERR, "APREFIOC_STATUS: %s",
+				    strerror(errno));
+				goto fail;
+			}
+			if (as.as_window == APREF_WIN_CLOSED)
+				continue;	/* read the rest */
+			now = as.as_window_msec;
+			if (now < limit && now - MIN(now, lastmiss) < idle)
+				flushed = false;
+			else if (!flushed) {
+				(void)ioctl(fd, APREFIOC_FLUSH);
+				flushed = true;
+				continue;
+			} else {
+				if (ioctl(fd, APREFIOC_RECSTOP) == -1) {
+					logmsg(LOG_ERR, "APREFIOC_RECSTOP: %s",
+					    strerror(errno));
+					goto fail;
+				}
+				stopped = true;
+				continue;
+			}
+		}
+		(void)nanosleep(&nap, NULL);
 	}
-	if (lost > 0)
-		logmsg(LOG_WARNING, "dropped %zu entries past %d", lost,
-		    APREF_TRACEMAX);
-	*recsp = recs;
-	*np = (uint32_t)n;
+	if (stopped)
+		logmsg(LOG_INFO, "closed the window at %.1f s, the last miss "
+		    "was at %.1f s", now / 1000.0, lastmiss / 1000.0);
+	else
+		logmsg(LOG_INFO, "the window closed before the session "
+		    "settled");
+	return 0;
+fail:
+	if (!stopped)
+		(void)ioctl(fd, APREFIOC_RECSTOP);
+	return -1;
+}
+
+/* The name of trace i: base itself for the newest, then base.1 and so on. */
+static int
+tracename(char *buf, size_t len, const char *base, int i)
+{
+	int n;
+
+	if (i == 0)
+		n = snprintf(buf, len, "%s", base);
+	else
+		n = snprintf(buf, len, "%s.%d", base, i);
+	if (n < 0 || (size_t)n >= len) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
 	return 0;
 }
 
+/* Make room for a new trace: base becomes base.1, and so on. */
 static void
-tracename(char *buf, size_t len, int i)
-{
-
-	if (i == 0)
-		(void)snprintf(buf, len, "%s", APREF_TRACEFILE);
-	else
-		(void)snprintf(buf, len, "%s.%d", APREF_TRACEFILE, i);
-}
-
-/* Make room for a new trace: boot.trace becomes boot.trace.1, and so on. */
-static void
-rotate(int keep)
+rotate(const char *base, int keep)
 {
 	char from[PATH_MAX], to[PATH_MAX];
 	int i;
 
 	for (i = MAXKEEP; i >= keep; i--) {
-		tracename(from, sizeof(from), i);
-		(void)unlink(from);
+		if (tracename(from, sizeof(from), base, i) == 0)
+			(void)unlink(from);
 	}
 	for (i = keep - 1; i >= 1; i--) {
-		tracename(from, sizeof(from), i - 1);
-		tracename(to, sizeof(to), i);
+		if (tracename(from, sizeof(from), base, i - 1) == -1 ||
+		    tracename(to, sizeof(to), base, i) == -1)
+			continue;
 		if (rename(from, to) == -1 && errno != ENOENT)
 			logmsg(LOG_WARNING, "rename %s: %s", from,
 			    strerror(errno));
 	}
+}
+
+/* Save the entries collected as the newest trace. */
+static int
+savetrace(const char *base, int keep, const struct tracebuf *tb,
+    uint64_t ndropped)
+{
+
+	if (tb->tb_lost > 0)
+		logmsg(LOG_WARNING, "dropped %zu entries past %d", tb->tb_lost,
+		    APREF_TRACEMAX);
+	rotate(base, keep);
+	if (aprefio_save_trace(base, tb->tb_recs, (uint32_t)tb->tb_n,
+	    ndropped) == -1) {
+		logmsg(LOG_ERR, "%s: %s", base, strerror(errno));
+		return -1;
+	}
+	logmsg(LOG_INFO, "%s: %zu entries", base, tb->tb_n);
+	return 0;
 }
 
 static size_t
@@ -382,12 +547,12 @@ newtable(size_t want, size_t size, size_t *maskp)
 }
 
 /*
- * Rebuild the boot profile from the newest keep traces: keep the pages
- * and metadata blocks read in at least min of them, in the order in
- * which the newest trace that has them read them first.
+ * Rebuild the profile prof from the newest keep traces named after base:
+ * keep the pages and metadata blocks read in at least min of them, in
+ * the order in which the newest trace that has them read them first.
  */
 static int
-buildprof(int keep, int min)
+buildprof(const char *base, const char *prof, int keep, int min)
 {
 	struct aprefio_trace tr;
 	struct aprefetch_prof_ent *pe;
@@ -409,8 +574,8 @@ buildprof(int keep, int min)
 
 	/* Size the tables for the newest trace, with room for the others. */
 	for (t = 0; t < keep; t++) {
-		tracename(path, sizeof(path), t);
-		if (aprefio_load_trace(path, &tr) == -1)
+		if (tracename(path, sizeof(path), base, t) == -1 ||
+		    aprefio_load_trace(path, &tr) == -1)
 			continue;
 		for (k = 0; k < tr.t_hdr.th_nrecs; k++) {
 			if (APREF_REC_KIND(tr.t_recs[k].ar_flags) ==
@@ -432,8 +597,8 @@ buildprof(int keep, int min)
 	}
 
 	for (t = 0; t < keep; t++) {
-		tracename(path, sizeof(path), t);
-		if (aprefio_load_trace(path, &tr) == -1) {
+		if (tracename(path, sizeof(path), base, t) == -1 ||
+		    aprefio_load_trace(path, &tr) == -1) {
 			if (errno != ENOENT)
 				logmsg(LOG_WARNING, "%s: %s", path,
 				    strerror(errno));
@@ -575,13 +740,13 @@ buildprof(int keep, int min)
 	}
 	free(runs);
 
-	error = aprefio_save_prof(APREFETCH_BOOTPROF, pe, (uint32_t)nent, fsid,
+	error = aprefio_save_prof(prof, pe, (uint32_t)nent, fsid,
 	    (uint32_t)nfs);
 	if (error == -1)
-		logmsg(LOG_ERR, "%s: %s", APREFETCH_BOOTPROF, strerror(errno));
+		logmsg(LOG_ERR, "%s: %s", prof, strerror(errno));
 	else
 		logmsg(LOG_INFO, "%s: %zu entries, %zu of metadata, from %d "
-		    "traces", APREFETCH_BOOTPROF, nent, nmetaent, ntraces);
+		    "traces", prof, nent, nmetaent, ntraces);
 	free(pe);
 	return error;
 }
@@ -597,12 +762,81 @@ dropped(void)
 	return st.st_dropped;
 }
 
+/* A session name becomes part of file names: keep it plain. */
+static bool
+sessionok(const char *s)
+{
+	size_t i;
+
+	if (s[0] == '\0' || s[0] == '.' || strlen(s) > MAXSESSION)
+		return false;
+	for (i = 0; s[i] != '\0'; i++) {
+		if (!isalnum((unsigned char)s[i]) &&
+		    strchr("+-._", s[i]) == NULL)
+			return false;
+	}
+	return true;
+}
+
+/* Make the directory of the sessions, which only root may look into. */
+static int
+sessiondir(void)
+{
+	struct stat st;
+
+	if (mkdir(APREF_SESSDIR, 0700) == -1 && errno != EEXIST)
+		return -1;
+	if (lstat(APREF_SESSDIR, &st) == -1)
+		return -1;
+	if (!S_ISDIR(st.st_mode)) {
+		errno = ENOTDIR;
+		return -1;
+	}
+	if (st.st_uid != 0) {
+		errno = EPERM;
+		return -1;
+	}
+	if ((st.st_mode & ALLPERMS) != 0700 && chmod(APREF_SESSDIR, 0700) == -1)
+		return -1;
+	return 0;
+}
+
+/*
+ * Open a window for a session, once nobody else is reading the device,
+ * and collect it.
+ */
+static int
+record_session(int fd, struct tracebuf *tb, uint64_t idle, uint64_t limit,
+    uint64_t *ndroppedp)
+{
+	uint64_t before;
+
+	if (lockdev(fd, LOCKWAIT) == -1) {
+		if (!quit)
+			logmsg(LOG_WARNING, "%s is still being read; not "
+			    "recording", APREFETCH_DEV);
+		return -1;
+	}
+	before = dropped();
+	if (ioctl(fd, APREFIOC_RECSTART) == -1) {
+		logmsg(LOG_WARNING, "cannot open a window: %s",
+		    strerror(errno));
+		return -1;
+	}
+	if (collect_session(fd, tb, idle, limit) == -1)
+		return -1;
+	*ndroppedp = dropped() - before;
+	return 0;
+}
+
 __dead static void
 usage(void)
 {
 
-	(void)fprintf(stderr, "usage: %s [-dMn] [-k keep] [-m min]\n",
-	    getprogname());
+	(void)fprintf(stderr,
+	    "usage: %s [-dMn] [-k keep] [-m min]\n"
+	    "       %s -s [-dMn] [-i idle] [-k keep] [-m min] [-t limit] "
+	    "uid session\n", getprogname(), getprogname());
 	exit(1);
 }
 
@@ -610,15 +844,24 @@ int
 main(int argc, char **argv)
 {
 	struct sigaction sa;
-	struct aprefetch_rec *recs = NULL;
-	uint32_t nrecs = 0;
-	bool nflag = false;
-	int ch, fd, keep = 3, min = 2, e;
+	struct tracebuf tb;
+	char base[PATH_MAX], prof[PATH_MAX];
+	uint64_t ndropped = 0;
+	unsigned int idle = 0, limit = 0;
+	bool nflag = false, sflag = false;
+	int ch, fd, keep = 3, min = 2, e, error, n1, n2;
+	uid_t uid;
 
-	while ((ch = getopt(argc, argv, "dk:Mm:n")) != -1) {
+	while ((ch = getopt(argc, argv, "di:k:Mm:nst:")) != -1) {
 		switch (ch) {
 		case 'd':
 			dflag = true;
+			break;
+		case 'i':
+			idle = (unsigned int)strtoi(optarg, NULL, 10, 1, 3600,
+			    &e);
+			if (e)
+				errx(1, "-i: seconds from 1 to 3600");
 			break;
 		case 'k':
 			keep = (int)strtoi(optarg, NULL, 10, 1, MAXKEEP, &e);
@@ -638,22 +881,62 @@ main(int argc, char **argv)
 		case 'n':
 			nflag = true;
 			break;
+		case 's':
+			sflag = true;
+			break;
+		case 't':
+			limit = (unsigned int)strtoi(optarg, NULL, 10, 1, 3600,
+			    &e);
+			if (e)
+				errx(1, "-t: seconds from 1 to 3600");
+			break;
 		default:
 			usage();
 		}
 	}
-	if (argc != optind)
-		usage();
+	argc -= optind;
+	argv += optind;
 	if (min > keep)
 		errx(1, "-m %d is more than -k %d", min, keep);
 
-	if ((fd = open(APREFETCH_DEV, O_RDONLY)) == -1)
+	if (sflag) {
+		if (argc != 2)
+			usage();
+		uid = (uid_t)strtoi(argv[0], NULL, 10, 0, UID_MAX, &e);
+		if (e)
+			errx(1, "%s: not a user id", argv[0]);
+		if (!sessionok(argv[1]))
+			errx(1, "%s: not a session name", argv[1]);
+		n1 = snprintf(base, sizeof(base), "%s/%u-%s.trace",
+		    APREF_SESSDIR, (unsigned int)uid, argv[1]);
+		n2 = snprintf(prof, sizeof(prof), "%s/%u-%s.prof",
+		    APREF_SESSDIR, (unsigned int)uid, argv[1]);
+		if (n1 < 0 || (size_t)n1 >= sizeof(base) || n2 < 0 ||
+		    (size_t)n2 >= sizeof(prof))
+			errx(1, "%s: name too long", argv[1]);
+		if (idle == 0)
+			idle = 3;
+		if (limit == 0)
+			limit = 30;
+	} else {
+		if (argc != 0 || idle != 0 || limit != 0)
+			usage();
+		(void)strlcpy(base, APREF_TRACEFILE, sizeof(base));
+		(void)strlcpy(prof, APREFETCH_BOOTPROF, sizeof(prof));
+	}
+
+	/* A session is read as it comes, to see when it has settled. */
+	if ((fd = open(APREFETCH_DEV, O_RDONLY | (sflag ? O_NONBLOCK : 0))) ==
+	    -1)
 		err(1, "%s", APREFETCH_DEV);
+	if (sflag && sessiondir() == -1)
+		err(1, "%s", APREF_SESSDIR);
 	if (!dflag) {
 		openlog(getprogname(), LOG_PID, LOG_DAEMON);
 		if (daemon(0, 0) == -1)
 			err(1, "daemon");
-		(void)pidfile(NULL);
+		if (!sflag)
+			(void)pidfile(NULL);
 	}
 
 	/* No SA_RESTART: a signal ends a read(2) that waits for entries. */
@@ -664,23 +947,30 @@ main(int argc, char **argv)
 	(void)sigaction(SIGINT, &sa, NULL);
 	(void)sigaction(SIGHUP, &sa, NULL);
 
-	if (collect(fd, &recs, &nrecs) == -1)
-		return quit ? 0 : 1;
+	memset(&tb, 0, sizeof(tb));
+	if (sflag)
+		error = record_session(fd, &tb, idle * 1000ULL,
+		    limit * 1000ULL, &ndropped);
+	else if ((error = lockdev(fd, 0)) == 0) {
+		error = collect(fd, &tb);
+		ndropped = dropped();
+	}
+	/* Let the next reader in. */
 	(void)close(fd);
-	if (nrecs == 0) {
+	if (error == -1) {
+		free(tb.tb_recs);
+		return quit ? 0 : 1;
+	}
+	if (tb.tb_n == 0) {
 		logmsg(LOG_INFO, "nothing was recorded");
 		return 0;
 	}
 
-	rotate(keep);
-	if (aprefio_save_trace(APREF_TRACEFILE, recs, nrecs, dropped()) == -1) {
-		logmsg(LOG_ERR, "%s: %s", APREF_TRACEFILE, strerror(errno));
+	error = savetrace(base, keep, &tb, ndropped);
+	free(tb.tb_recs);
+	if (error == -1)
 		return 1;
-	}
-	logmsg(LOG_INFO, "%s: %" PRIu32 " entries", APREF_TRACEFILE, nrecs);
-	free(recs);
-
-	if (!nflag && buildprof(keep, min) == -1)
+	if (!nflag && buildprof(base, prof, keep, min) == -1)
 		return 1;
 	return 0;
 }

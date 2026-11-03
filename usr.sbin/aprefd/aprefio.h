@@ -34,6 +34,7 @@
 #include <sys/aprefetch.h>
 
 #define	APREF_TRACEFILE		APREFETCH_DBDIR "/boot.trace"
+#define	APREF_SESSDIR		APREFETCH_DBDIR "/session"
 #define	APREF_TRACEMAX		(8 * 1024 * 1024)	/* entries */
 
 struct aprefio_prof {
@@ -55,5 +56,6 @@ int	aprefio_save_trace(const char *, const struct aprefetch_rec *,
 	    uint32_t, uint64_t);
 void	aprefio_free_trace(struct aprefio_trace *);
 void	*aprefio_readfile(const char *, size_t, size_t *);
+void	*aprefio_readprof(const char *, size_t *);
 
 #endif /* !_APREFIO_H_ */

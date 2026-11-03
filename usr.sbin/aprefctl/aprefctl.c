@@ -43,6 +43,7 @@ __RCSID("$NetBSD$");
 #include <glob.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <paths.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,6 +58,8 @@ __RCSID("$NetBSD$");
 #define	MB(bytes)	((double)(bytes) / (1024 * 1024))
 #define	MAXMARKS	4096
 #define	MAXEXT		256		/* extents per APREFIOC_BMAP */
+#define	WAITMS		100		/* msec between tries of replay -w */
+#define	REPLAYLOCK	_PATH_VARRUN "aprefctl.replay"
 #define	PLOTW		72
 #define	PLOTH		20
 
@@ -86,6 +89,7 @@ static int	cmd_delete(int, char **);
 static int	cmd_trace(int, char **);
 static int	cmd_scatter(int, char **);
 static int	cmd_replay(int, char **);
+static int	cmd_replaystop(int, char **);
 
 static const struct cmd cmds[] = {
 	{ "status",	cmd_status,	"" },
@@ -98,7 +102,8 @@ static const struct cmd cmds[] = {
 	{ "delete",	cmd_delete,	"boot | file" },
 	{ "trace",	cmd_trace,	"[file]" },
 	{ "scatter",	cmd_scatter,	"[-a] [-c csvfile] [-s svgfile] [file]" },
-	{ "replay",	cmd_replay,	"[-b bytes] boot | file" },
+	{ "replay",	cmd_replay,	"[-b bytes] [-w seconds] boot | file" },
+	{ "replay-stop", cmd_replaystop, "" },
 };
 
 static long	pagesize;
@@ -154,6 +159,7 @@ endname(uint32_t end)
 		[APREF_END_DISABLED] = "stopped, disabled",
 		[APREF_END_NOPROFILE] = "no profile",
 		[APREF_END_BADPROFILE] = "profile rejected",
+		[APREF_END_CANCEL] = "cancelled",
 	};
 
 	return end < __arraycount(names) && names[end] != NULL ?
@@ -441,62 +447,76 @@ cmd_marks(int argc, char **argv)
 }
 
 static void
-listprof(const char *path)
+listprof(const char *path, int width)
 {
 	struct aprefio_prof p;
 	uint32_t i, nmeta;
 
 	if (aprefio_load_prof(path, &p) == -1) {
-		printf("%-34s %s\n", path, strerror(errno));
+		printf("%-*s %s\n", width, path, strerror(errno));
 		return;
 	}
 	for (i = 0, nmeta = 0; i < p.p_hdr.ph_nentries; i++)
 		nmeta += p.p_ents[i].pe_kind != APREF_KIND_DATA;
-	printf("%-34s %s %8" PRIu32 " entries (%" PRIu32 " metadata) %8"
-	    PRIu32 " pages %8.1f MB\n", path, timestr(p.p_hdr.ph_ctime),
+	printf("%-*s %s %8" PRIu32 " entries (%" PRIu32 " metadata) %8"
+	    PRIu32 " pages %8.1f MB\n", width, path, timestr(p.p_hdr.ph_ctime),
 	    p.p_hdr.ph_nentries, nmeta, p.p_hdr.ph_npages,
 	    MB((uint64_t)p.p_hdr.ph_npages * pagesize));
 	aprefio_free_prof(&p);
 }
 
 static void
-listtrace(const char *path)
+listtrace(const char *path, int width)
 {
 	struct aprefio_trace t;
 
 	if (aprefio_load_trace(path, &t) == -1) {
-		printf("%-34s %s\n", path, strerror(errno));
+		printf("%-*s %s\n", width, path, strerror(errno));
 		return;
 	}
-	printf("%-34s %s %8" PRIu32 " entries %8" PRIu64 " dropped\n",
-	    path, timestr(t.t_hdr.th_ctime), t.t_hdr.th_nrecs,
+	printf("%-*s %s %8" PRIu32 " entries %8" PRIu64 " dropped\n",
+	    width, path, timestr(t.t_hdr.th_ctime), t.t_hdr.th_nrecs,
 	    t.t_hdr.th_dropped);
 	aprefio_free_trace(&t);
 }
 
+static bool
+suffix(const char *s, const char *suf)
+{
+	const size_t len = strlen(s), slen = strlen(suf);
+
+	return len >= slen && strcmp(s + len - slen, suf) == 0;
+}
+
+/* The profiles first, then the traces; the boot's, then the sessions'. */
 static int
 cmd_list(int argc, char **argv)
 {
+	static const char *const pats[] = {
+		"/etc/aprefetch/*.prof",
+		APREF_SESSDIR "/*.prof",
+		APREF_TRACEFILE "*",
+		APREF_SESSDIR "/*.trace*",
+	};
+	const char *path;
 	glob_t g;
-	size_t i, len;
+	size_t i, width = 0;
 
 	if (argc != 1)
 		usage();
 	memset(&g, 0, sizeof(g));
-	if (glob("/etc/aprefetch/*.prof", 0, NULL, &g) == 0) {
-		for (i = 0; i < g.gl_pathc; i++)
-			listprof(g.gl_pathv[i]);
-	}
-	globfree(&g);
-	memset(&g, 0, sizeof(g));
-	if (glob(APREF_TRACEFILE "*", 0, NULL, &g) == 0) {
-		for (i = 0; i < g.gl_pathc; i++) {
-			len = strlen(g.gl_pathv[i]);
-			if (len >= 4 && strcmp(g.gl_pathv[i] + len - 4,
-			    ".tmp") == 0)
-				continue;
-			listtrace(g.gl_pathv[i]);
-		}
+	for (i = 0; i < __arraycount(pats); i++)
+		(void)glob(pats[i], i > 0 ? GLOB_APPEND : 0, NULL, &g);
+	for (i = 0; i < g.gl_pathc; i++)
+		width = MAX(width, strlen(g.gl_pathv[i]));
+	for (i = 0; i < g.gl_pathc; i++) {
+		path = g.gl_pathv[i];
+		if (suffix(path, ".tmp"))
+			continue;
+		if (suffix(path, ".prof"))
+			listprof(path, (int)width);
+		else
+			listtrace(path, (int)width);
 	}
 	globfree(&g);
 	return 0;
@@ -932,22 +952,92 @@ cmd_scatter(int argc, char **argv)
 	return 0;
 }
 
+/*
+ * The latest request to replay, or to stop replaying, wins: a replay
+ * that waits with -w gives up once another request has come.  The
+ * latest request leaves its process ID in REPLAYLOCK, and each one looks
+ * at it and makes its ioctl under an flock(2) of the file.  Without the
+ * file, as on a read-only /var, requests do not see each other.
+ */
+static void
+turn_lock(int lfd)
+{
+
+	if (lfd != -1)
+		(void)flock(lfd, LOCK_EX);
+}
+
+static void
+turn_unlock(int lfd)
+{
+
+	if (lfd != -1)
+		(void)flock(lfd, LOCK_UN);
+}
+
+/* Open and lock the file, and make this process the latest request. */
+static int
+turn_take(void)
+{
+	char buf[16];
+	int lfd, n;
+
+	lfd = open(REPLAYLOCK, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+	    0600);
+	if (lfd == -1)
+		return -1;
+	turn_lock(lfd);
+	n = snprintf(buf, sizeof(buf), "%d\n", (int)getpid());
+	if (ftruncate(lfd, 0) == -1 || pwrite(lfd, buf, (size_t)n, 0) != n)
+		warn("%s", REPLAYLOCK);
+	return lfd;
+}
+
+/* Is this process still the latest request?  The file is locked. */
+static bool
+turn_mine(int lfd)
+{
+	char buf[16];
+	ssize_t n;
+	pid_t pid;
+	int e;
+
+	if (lfd == -1)
+		return true;
+	if ((n = pread(lfd, buf, sizeof(buf) - 1, 0)) <= 0)
+		return false;
+	buf[n] = '\0';
+	pid = (pid_t)strtoi(buf, NULL, 10, 1, INT_MAX, &e);
+	return (e == 0 || e == ENOTSUP) && pid == getpid();
+}
+
 static int
 cmd_replay(int argc, char **argv)
 {
+	const struct timespec nap = { 0, WAITMS * 1000000L };
 	struct aprefetch_replay ar;
+	struct aprefetch_status as;
 	const char *path;
 	int64_t budget = 0;
+	unsigned int n, wait = 0;
 	size_t len;
 	void *buf;
-	int ch, fd;
+	bool superseded = false;
+	int ch, e, error, fd, lfd;
 
-	while ((ch = getopt(argc, argv, "b:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:w:")) != -1) {
 		switch (ch) {
 		case 'b':
 			if (dehumanize_number(optarg, &budget) == -1 ||
 			    budget <= 0)
 				errx(1, "-b: %s: not a size", optarg);
+			break;
+		case 'w':
+			wait = (unsigned int)strtoi(optarg, NULL, 10, 0, 3600,
+			    &e);
+			if (e)
+				errx(1, "-w: %s: seconds from 0 to 3600",
+				    optarg);
 			break;
 		default:
 			usage();
@@ -956,17 +1046,64 @@ cmd_replay(int argc, char **argv)
 	if (argc - optind != 1)
 		usage();
 	path = profpath(argv[optind]);
-	if ((buf = aprefio_readfile(path, APREF_PROF_MAXSIZE, &len)) == NULL)
+	if ((buf = aprefio_readprof(path, &len)) == NULL)
 		err(1, "%s", path);
 	memset(&ar, 0, sizeof(ar));
 	ar.ar_prof = buf;
 	ar.ar_len = len;
 	ar.ar_budget = (uint64_t)budget;
 	fd = devopen(O_RDONLY);
-	if (ioctl(fd, APREFIOC_REPLAY, &ar) == -1)
-		err(1, "replay %s", path);
+
+	/* While another replay runs, try again until wait runs out. */
+	lfd = turn_take();
+	for (n = 0;; n++) {
+		if (!turn_mine(lfd)) {
+			superseded = true;
+			error = 0;
+		} else if (ioctl(fd, APREFIOC_STATUS, &as) == 0 &&
+		    as.as_replaying)
+			error = EBUSY;	/* rather than copy it in again */
+		else if (ioctl(fd, APREFIOC_REPLAY, &ar) == -1)
+			error = errno;
+		else
+			error = 0;
+		turn_unlock(lfd);
+		if (error != EBUSY || n >= wait * (1000 / WAITMS))
+			break;
+		(void)nanosleep(&nap, NULL);
+		turn_lock(lfd);
+	}
+	if (lfd != -1)
+		(void)close(lfd);
 	(void)close(fd);
 	free(buf);
+	if (superseded)
+		errx(1, "replay %s: superseded by a later request", path);
+	if (error)
+		errc(1, error, "replay %s", path);
+	return 0;
+}
+
+/*
+ * Stop the replay that is running, and those that wait to start, and
+ * wait until it has stopped.
+ */
+static int
+cmd_replaystop(int argc, char **argv)
+{
+	int error, fd, lfd;
+
+	if (argc != 1)
+		usage();
+	fd = devopen(O_RDONLY);
+	lfd = turn_take();
+	error = ioctl(fd, APREFIOC_REPLAYSTOP, NULL) == -1 ? errno : 0;
+	if (lfd != -1)
+		(void)close(lfd);
+	(void)close(fd);
+	/* ESRCH: none was running. */
+	if (error != 0 && error != ESRCH)
+		errc(1, error, "replay-stop");
 	return 0;
 }
 

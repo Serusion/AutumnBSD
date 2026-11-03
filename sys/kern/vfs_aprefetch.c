@@ -83,12 +83,21 @@
  * it stops, it waits for its i/o to complete before it releases the
  * vnodes.
  *
+ * Cancel.  APREFIOC_REPLAYSTOP marks the running replay, which stops at
+ * its next step as it does on timeout: it waits for its i/o and releases
+ * its vnodes.  The ioctl returns once that replay has ended.  It knows
+ * the replay by its number, so that one started meanwhile is neither
+ * cancelled nor waited for.
+ *
  * Unmount.  dounmount() calls aprefetch_unmount() before it suspends
  * the file system.  The replay drops what it has not done there, waits
  * for its i/o, releases its vnodes on that file system and only then
  * lets the unmount go on.  The order matters: on a suspended file
  * system vfs_busy() and VOP_GETPAGES sleep, and a replay asleep there
- * could never answer.
+ * could never answer.  Until dounmount() has suspended the file system
+ * and calls aprefetch_unmount_done(), no new replay may start: it would
+ * not know of the unmount, and could take vnodes there that the unmount
+ * would then find busy.
  *
  * Marks.  write(2) stores a timestamped label together with the read
  * counters of the root disk; /etc/rc writes one around each rc.d
@@ -299,9 +308,13 @@ struct aprefetch_run {
 
 	TAILQ_HEAD(, aprefetch_umreq) r_umreqs;	/* (L) */
 	bool			r_mounted;	/* (L) a mount happened */
+	bool			r_cancel;	/* (L) APREFIOC_REPLAYSTOP */
+	uint64_t		r_seq;		/* (L) number of the replay */
 };
 
 static struct aprefetch_run	*aprefetch_running;	/* (L) */
+static uint64_t			aprefetch_seq;		/* (L) replays so far */
+static unsigned int		aprefetch_unmounting;	/* (L) before suspend */
 static struct aprefetch_stats	aprefetch_st;	/* replay part */
 static lwp_t			*aprefetch_replay_lwp;	/* reads not to record */
 static unsigned int		aprefetch_nbufs;	/* (L) metadata reads in flight */
@@ -1313,6 +1326,7 @@ static bool
 aprefetch_stop(struct aprefetch_run *run)
 {
 	struct aprefetch_umreq *ur;
+	bool cancel;
 
 	mutex_enter(&aprefetch_lock);
 	while ((ur = TAILQ_FIRST(&run->r_umreqs)) != NULL) {
@@ -1324,10 +1338,13 @@ aprefetch_stop(struct aprefetch_run *run)
 		ur->ur_done = true;
 		cv_broadcast(&aprefetch_cv);
 	}
+	cancel = run->r_cancel;
 	mutex_exit(&aprefetch_lock);
 
 	if (run->r_end == APREF_END_NONE) {
-		if (!atomic_load_relaxed(&aprefetch_enable))
+		if (cancel)
+			run->r_end = APREF_END_CANCEL;
+		else if (!atomic_load_relaxed(&aprefetch_enable))
 			run->r_end = APREF_END_DISABLED;
 		else if (aprefetch_uptime_ms() >= run->r_deadline)
 			run->r_end = APREF_END_TIMEOUT;
@@ -1616,7 +1633,7 @@ aprefetch_wait_mount(struct aprefetch_run *run)
 
 	mutex_enter(&aprefetch_lock);
 	while (!run->r_mounted && TAILQ_EMPTY(&run->r_umreqs) &&
-	    atomic_load_relaxed(&aprefetch_enable) &&
+	    !run->r_cancel && atomic_load_relaxed(&aprefetch_enable) &&
 	    (now = aprefetch_uptime_ms()) < run->r_deadline) {
 		/* No more than replay_timeout, at most 3600 s, is left. */
 		(void)cv_timedwait(&aprefetch_cv, &aprefetch_lock,
@@ -1699,7 +1716,8 @@ aprefetch_run_end(struct aprefetch_run *run, uint32_t msec)
 	aprefetch_st.st_last_msec = msec;
 	if (run->r_end == APREF_END_TIMEOUT ||
 	    run->r_end == APREF_END_MEMORY ||
-	    run->r_end == APREF_END_DISABLED)
+	    run->r_end == APREF_END_DISABLED ||
+	    run->r_end == APREF_END_CANCEL)
 		aprefetch_st.st_aborts++;
 	cv_broadcast(&aprefetch_cv);
 	mutex_exit(&aprefetch_lock);
@@ -1742,11 +1760,12 @@ aprefetch_run_launch(struct aprefetch_run *run)
 	    (uint64_t)atomic_load_relaxed(&aprefetch_replay_timeout) * 1000;
 
 	mutex_enter(&aprefetch_lock);
-	if (aprefetch_running != NULL) {
+	if (aprefetch_running != NULL || aprefetch_unmounting > 0) {
 		mutex_exit(&aprefetch_lock);
 		return EBUSY;
 	}
 	aprefetch_running = run;
+	run->r_seq = ++aprefetch_seq;
 	aprefetch_st.st_replays++;
 	mutex_exit(&aprefetch_lock);
 
@@ -1780,7 +1799,8 @@ aprefetch_mount(struct mount *mp)
 
 /*
  * Called by dounmount() before it suspends mp.  Returns once the replay
- * holds no vnode on mp and has no i/o there.
+ * holds no vnode on mp and has no i/o there.  No replay starts until
+ * aprefetch_unmount_done().
  */
 void
 aprefetch_unmount(struct mount *mp)
@@ -1790,12 +1810,29 @@ aprefetch_unmount(struct mount *mp)
 	ur.ur_mp = mp;
 	ur.ur_done = false;
 	mutex_enter(&aprefetch_lock);
+	aprefetch_unmounting++;
 	if (aprefetch_running != NULL) {
 		TAILQ_INSERT_TAIL(&aprefetch_running->r_umreqs, &ur, ur_entry);
 		cv_broadcast(&aprefetch_cv);
 		while (!ur.ur_done)
 			cv_wait(&aprefetch_cv, &aprefetch_lock);
 	}
+	mutex_exit(&aprefetch_lock);
+}
+
+/*
+ * Called by dounmount() once vfs_suspend() has returned, whether it
+ * suspended mp or failed.  A replay may start again: on a suspended file
+ * system it can take no new vnode, and the unmount is over or abandoned
+ * by the time it can.
+ */
+void
+aprefetch_unmount_done(struct mount *mp)
+{
+
+	mutex_enter(&aprefetch_lock);
+	KASSERT(aprefetch_unmounting > 0);
+	aprefetch_unmounting--;
 	mutex_exit(&aprefetch_lock);
 }
 
@@ -2003,6 +2040,7 @@ aprefetch_ioc_replay(const struct aprefetch_replay *ar)
 {
 	struct aprefetch_run *run;
 	void *buf;
+	bool busy;
 	int error;
 
 	if (!atomic_load_relaxed(&aprefetch_enable))
@@ -2010,6 +2048,12 @@ aprefetch_ioc_replay(const struct aprefetch_replay *ar)
 	if (ar->ar_len < sizeof(struct aprefetch_prof_hdr) ||
 	    ar->ar_len > APREF_PROF_MAXSIZE)
 		return EINVAL;
+	/* Not worth copying the profile in; aprefetch_run_launch() decides. */
+	mutex_enter(&aprefetch_lock);
+	busy = aprefetch_running != NULL || aprefetch_unmounting > 0;
+	mutex_exit(&aprefetch_lock);
+	if (busy)
+		return EBUSY;
 	buf = kmem_alloc(ar->ar_len, KM_SLEEP);
 	error = copyin(ar->ar_prof, buf, ar->ar_len);
 	if (error == 0) {
@@ -2023,6 +2067,32 @@ aprefetch_ioc_replay(const struct aprefetch_replay *ar)
 	}
 	kmem_free(buf, ar->ar_len);
 	return error;
+}
+
+/*
+ * Cancel the running replay and wait until it has ended, that is until
+ * its reads are over and its vnodes released.
+ */
+static int
+aprefetch_ioc_replaystop(void)
+{
+	uint64_t seq;
+	int error = 0;
+
+	mutex_enter(&aprefetch_lock);
+	if (aprefetch_running == NULL) {
+		mutex_exit(&aprefetch_lock);
+		return ESRCH;
+	}
+	aprefetch_running->r_cancel = true;
+	seq = aprefetch_running->r_seq;
+	cv_broadcast(&aprefetch_cv);	/* for aprefetch_wait_mount() */
+	while (error == 0 && aprefetch_running != NULL &&
+	    aprefetch_running->r_seq == seq)
+		error = cv_wait_sig(&aprefetch_cv, &aprefetch_lock);
+	mutex_exit(&aprefetch_lock);
+	/* Restarted, the ioctl would cancel the replay after this one. */
+	return error == ERESTART ? EINTR : error;
 }
 
 static int
@@ -2077,6 +2147,9 @@ aprefetch_ioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 		break;
 	case APREFIOC_REPLAY:
 		error = aprefetch_ioc_replay(data);
+		break;
+	case APREFIOC_REPLAYSTOP:
+		error = aprefetch_ioc_replaystop();
 		break;
 	default:
 		error = ENOTTY;

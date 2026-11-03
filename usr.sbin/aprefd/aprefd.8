@@ -24,17 +24,25 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 1, 2026
+.Dd November 3, 2026
 .Dt APREFD 8
 .Os
 .Sh NAME
 .Nm aprefd
-.Nd collect boot-time file reads and update the boot profile
+.Nd collect recorded file reads and update the prefetch profiles
 .Sh SYNOPSIS
 .Nm
 .Op Fl dMn
 .Op Fl k Ar keep
 .Op Fl m Ar min
+.Nm
+.Fl s
+.Op Fl dMn
+.Op Fl i Ar idle
+.Op Fl k Ar keep
+.Op Fl m Ar min
+.Op Fl t Ar limit
+.Ar uid session
 .Sh DESCRIPTION
 .Nm
 reads the access entries that
@@ -50,13 +58,55 @@ and so on, and rebuilds the boot profile
 .Pa /etc/aprefetch/boot.prof
 from the newest traces, and exits.
 .Pp
+With
+.Fl s ,
+.Nm
+records a login session instead: the session named
+.Ar session ,
+such as a session of
+.Xr akture 8 ,
+of the user whose user ID is
+.Ar uid .
+It detaches at once, opens a recording window, and closes it once no read
+has missed the cache for
+.Ar idle
+seconds, which is when the session has read what it needs to start, or
+after
+.Ar limit
+seconds.
+The trace is saved as
+.Pa /var/db/aprefetch/session/ Ns Ar uid Ns - Ns Ar session Ns Pa .trace ,
+the older ones renamed as for the boot, and the profile is rebuilt in the
+same way, as
+.Ar uid Ns - Ns Ar session Ns Pa .prof
+in the same directory, for
+.Ic aprefctl replay
+to replay at the next login.
+A session name is made of letters, digits,
+.Ql + ,
+.Ql - ,
+.Ql \&.
+and
+.Ql _ ,
+and does not start with a dot.
+.Pp
+Each recording window starts out with the entries left from the last one
+discarded, so only one
+.Nm
+reads the device at a time: a session waits up to ten seconds for the
+.Nm
+that reads the boot window to finish, and is not recorded if it does
+not.
+A window records the reads of every process, not only those of the
+session.
+.Pp
 The profile keeps the pages, and the metadata blocks, that were read in at
 least
 .Ar min
 of the newest
 .Ar keep
 traces, or in all of them while there are fewer, so that work done in only
-one boot does not make the profile grow.
+one boot or session does not make the profile grow.
 The pages are grouped into ranges of a file, and the ranges and the blocks
 are ordered by the time at which the newest trace that has them read them
 first, so that when the budget of the replay runs out, what was read early
@@ -65,13 +115,18 @@ The profile is limited to 16 MB and to the eight file systems with the most
 pages.
 .Pp
 Both files are written to a temporary name and renamed into place, with
-mode 0600.
+mode 0600; the directory of the sessions is made with mode 0700.
 .Pp
 The options are as follows:
 .Bl -tag -width indent
 .It Fl d
 Stay in the foreground and report to the standard error instead of
 .Xr syslog 3 .
+.It Fl i Ar idle
+With
+.Fl s ,
+close the window once no read has missed the cache for this many
+seconds; 3 by default.
 .It Fl k Ar keep
 Keep and use this many traces, from 1 to 9; 3 by default.
 .It Fl m Ar min
@@ -83,6 +138,15 @@ This is to measure what prefetching metadata gains.
 .It Fl n
 Save the trace but leave the profile alone.
 With no profile, this records without prefetching.
+.It Fl s
+Record a login session, as described above.
+.It Fl t Ar limit
+With
+.Fl s ,
+close the window after this many seconds at most; 30 by default.
+The window also closes after
+.Va kern.aprefetch.record_timeout
+seconds.
 .El
 .Pp
 .Nm
@@ -93,12 +157,35 @@ when
 is set in
 .Xr rc.conf 5 ,
 which is the default.
+.Pp
+At a login on the console,
+.Xr pam_exec 8
+runs
+.Pa /usr/libexec/aprefetch-login
+from
+.Pa /etc/pam.d/login
+once the user has been let in.
+It closes the boot window, starts
+.Nm Fl s
+with the session name
+.Dq login ,
+and replays the profile of the last console session of the user.
+For a graphical login, the aprefetch hook of
+.Xr akture 8
+does the same, and replays the profile of the last session of the last
+user while the password is typed.
 .Sh FILES
-.Bl -tag -width /var/db/aprefetch/boot.trace -compact
+.Bl -tag -width /var/db/aprefetch/session -compact
 .It Pa /dev/aprefetch
 .It Pa /etc/aprefetch/boot.prof
+.It Pa /usr/libexec/aprefetch-login
 .It Pa /var/db/aprefetch/boot.trace
+.It Pa /var/db/aprefetch/session
+the traces and profiles of the sessions
 .It Pa /var/run/aprefd.pid
+the process ID of
+.Nm
+reading the boot window
 .El
 .Sh EXAMPLES
 To measure a boot that records but does not prefetch, remove the profile
@@ -109,9 +196,19 @@ from making a new one:
 # aprefctl delete boot
 # echo 'aprefd_flags="-n"' >> /etc/rc.conf
 .Ed
+.Pp
+To see how the window of a session would close, record one in the
+foreground, here the session
+.Dq test
+of user ID 1000, without a profile:
+.Bd -literal -offset indent
+# aprefd -d -n -s 1000 test
+.Ed
 .Sh SEE ALSO
 .Xr aprefetch 4 ,
-.Xr aprefctl 8
+.Xr akture 8 ,
+.Xr aprefctl 8 ,
+.Xr pam_exec 8
 .Sh HISTORY
 .Nm
 was written for AutumnBSD.

@@ -1448,6 +1448,7 @@
 ./var/cron/tabs			mode=0700
 ./var/db
 ./var/db/aprefetch		mode=0700
+./var/db/aprefetch/session	mode=0700
 ./var/db/dhcpcd			mode=0750
 ./var/db/ns
 ./var/db/obsolete

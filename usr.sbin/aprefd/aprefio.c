@@ -35,6 +35,7 @@ __RCSID("$NetBSD$");
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,9 +46,12 @@ __RCSID("$NetBSD$");
 
 #include "aprefio.h"
 
-/* Read a whole regular file of at most max bytes. */
-void *
-aprefio_readfile(const char *path, size_t max, size_t *lenp)
+/*
+ * Read a whole regular file of at most max bytes, which with rootonly
+ * must be root's and writable by nobody else.
+ */
+static void *
+readfile(const char *path, size_t max, size_t *lenp, bool rootonly)
 {
 	struct stat st;
 	char *buf = NULL;
@@ -62,6 +66,11 @@ aprefio_readfile(const char *path, size_t max, size_t *lenp)
 	if (!S_ISREG(st.st_mode) || st.st_size < 0 ||
 	    (uintmax_t)st.st_size > max) {
 		errno = EFTYPE;
+		goto fail;
+	}
+	if (rootonly && (st.st_uid != 0 ||
+	    (st.st_mode & (S_IWGRP | S_IWOTH)) != 0)) {
+		errno = EPERM;
 		goto fail;
 	}
 	len = (size_t)st.st_size;
@@ -84,6 +93,24 @@ fail:
 	(void)close(fd);
 	errno = serrno;
 	return NULL;
+}
+
+void *
+aprefio_readfile(const char *path, size_t max, size_t *lenp)
+{
+
+	return readfile(path, max, lenp, false);
+}
+
+/*
+ * Read a profile for the kernel to replay.  As for the boot profile,
+ * only root may decide what the kernel reads.
+ */
+void *
+aprefio_readprof(const char *path, size_t *lenp)
+{
+
+	return readfile(path, APREF_PROF_MAXSIZE, lenp, true);
 }
 
 static int
