@@ -24,7 +24,7 @@ On the target hardware used for testing, the time required for the userland to l
 ## Future Work
 
 - Compressed Memory, azram (phase 1 implemented, not yet measured on the target hardware): Keeps pages compressed in RAM using LZ4 before they are swapped out—similar to `zram`, except that pages that do not compress, or that would need memory when it is short, still go to the HDD swap as before. This will also serve as a temporary buffer for data that cannot yet be written to disk. [Specification](AutumnBSD_SPEC_MEMORY.md); manual pages: [azram(4)](share/man/man4/azram.4), [azramctl(8)](usr.sbin/azramctl/azramctl.8)
-- Display Manager (conceptual stage): A custom-built, low-dependency login screen. It begins prefetching the user session while the password is being entered.
+- Display Manager, Akture (in development, not yet run on the target hardware): A custom-built, low-dependency login screen, developed in [Serusion/Akture](https://github.com/Serusion/Akture) and packaged for pkgsrc in [pkgsrc/x11/akture](pkgsrc/x11/akture). It will begin prefetching the user session while the password is being entered, once aprefetch has per-application profiles.
 - Package Installation (under consideration): Consolidating post-installation tasks and `fsync` operations to reduce wait times on HDD-based systems.
 
 ## Design Philosophy

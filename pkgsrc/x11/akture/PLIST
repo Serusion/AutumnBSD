@@ -1,0 +1,16 @@
+@comment $NetBSD$
+bin/akture-conv
+libexec/akture-greeter
+man/man1/akture-conv.1
+man/man5/akture.conf.5
+man/man8/akture-greeter.8
+man/man8/akture.8
+sbin/akture
+share/examples/akture/akture.conf
+share/examples/akture/hooks.d/50-aprefetch
+share/examples/akture/pam.d/akture
+share/examples/akture/pam.d/akture-autologin
+share/examples/akture/resolutions
+share/examples/akture/sessions/fluxbox
+@pkgdir share/akture/fonts
+@pkgdir share/akture/backgrounds
